@@ -31,6 +31,7 @@ export default function Home() {
   const [editText, setEditText] = useState("");
   const [showDict, setShowDict] = useState(false);
   const [dict, setDict] = useState<DictEntry[]>([]);
+  const [aiEnabled, setAiEnabled] = useState(true);
   const recRef = useRef<SpeechRecognition | null>(null);
   const idRef = useRef(0);
 
@@ -39,6 +40,19 @@ export default function Home() {
   }, []);
 
   const processWithAI = useCallback(async (rawText: string) => {
+    // AI OFF: apply user dict only, no API call
+    if (!aiEnabled) {
+      const entry: NoteEntry = {
+        id: ++idRef.current,
+        raw: rawText,
+        cleaned: applyDict(rawText),
+        context,
+        timestamp: new Date(),
+      };
+      setNotes((prev) => [entry, ...prev]);
+      return;
+    }
+
     setProcessing(true);
     try {
       const res = await fetch("/api/voice", {
@@ -66,13 +80,13 @@ export default function Home() {
     const entry: NoteEntry = {
       id: ++idRef.current,
       raw: rawText,
-      cleaned: rawText,
+      cleaned: applyDict(rawText),
       context,
       timestamp: new Date(),
     };
     setNotes((prev) => [entry, ...prev]);
     setProcessing(false);
-  }, [context]);
+  }, [context, aiEnabled]);
 
   const toggleListening = useCallback(() => {
     if (listening) {
@@ -227,8 +241,8 @@ export default function Home() {
         <p className="text-sm text-gray-500 mt-1">話すだけで、きれいなメモになる</p>
       </header>
 
-      {/* Context Selector */}
-      <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+      {/* Context Selector (AI ON only) */}
+      {aiEnabled && <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
         {CONTEXTS.map((c) => (
           <button
             key={c.value}
@@ -245,6 +259,28 @@ export default function Home() {
             </div>
           </button>
         ))}
+      </div>}
+
+      {/* AI Toggle */}
+      <div className="flex items-center justify-between bg-white rounded-lg px-4 py-2.5 mb-3 border border-gray-100 shadow-sm">
+        <div>
+          <span className="text-sm font-medium">AI整形</span>
+          <span className="text-[10px] text-gray-400 ml-2">
+            {aiEnabled ? "フィラー除去・句読点・タスク抽出" : "聞こえたままテキスト化"}
+          </span>
+        </div>
+        <button
+          onClick={() => setAiEnabled(!aiEnabled)}
+          className={`relative w-11 h-6 rounded-full transition-colors ${
+            aiEnabled ? "bg-indigo-600" : "bg-gray-300"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+              aiEnabled ? "translate-x-5" : "translate-x-0"
+            }`}
+          />
+        </button>
       </div>
 
       {/* Mode Toggle */}
