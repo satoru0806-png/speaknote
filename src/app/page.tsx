@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useCallback, useEffect } from "react";
 import type { VoiceContext } from "@/lib/voice-ai";
+import { applyDict, addToDict, loadDict, removeFromDict, type DictEntry } from "@/lib/user-dict";
 
 type NoteEntry = {
   id: number;
@@ -26,8 +27,16 @@ export default function Home() {
   const [mode, setMode] = useState<"voice" | "type">("voice");
   const [typedText, setTypedText] = useState("");
   const [copied, setCopied] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
+  const [showDict, setShowDict] = useState(false);
+  const [dict, setDict] = useState<DictEntry[]>([]);
   const recRef = useRef<SpeechRecognition | null>(null);
   const idRef = useRef(0);
+
+  useEffect(() => {
+    setDict(loadDict());
+  }, []);
 
   const processWithAI = useCallback(async (rawText: string) => {
     setProcessing(true);
@@ -42,7 +51,7 @@ export default function Home() {
         const entry: NoteEntry = {
           id: ++idRef.current,
           raw: rawText,
-          cleaned: data.cleaned || rawText,
+          cleaned: applyDict(data.cleaned || rawText),
           tasks: data.tasks,
           context,
           timestamp: new Date(),
@@ -122,6 +131,38 @@ export default function Home() {
     window.open("https://keep.google.com/#NOTE", "_blank");
     setCopied(note.id);
     setTimeout(() => setCopied(null), 1500);
+  };
+
+  const startEdit = (note: NoteEntry) => {
+    setEditingId(note.id);
+    setEditText(note.cleaned);
+  };
+
+  const saveEdit = (note: NoteEntry) => {
+    if (editText !== note.cleaned) {
+      // Find words that changed and learn them
+      const oldWords = note.cleaned.split(/(?<=[\u3000-\u9fff\uf900-\ufaff])|(?=[\u3000-\u9fff\uf900-\ufaff])/);
+      const newWords = editText.split(/(?<=[\u3000-\u9fff\uf900-\ufaff])|(?=[\u3000-\u9fff\uf900-\ufaff])/);
+      // Simple diff: find continuous changed segments
+      let i = 0;
+      while (i < oldWords.length && i < newWords.length && oldWords[i] === newWords[i]) i++;
+      let j = oldWords.length - 1;
+      let k = newWords.length - 1;
+      while (j > i && k > i && oldWords[j] === newWords[k]) { j--; k--; }
+      if (i <= j && i <= k) {
+        const wrong = oldWords.slice(i, j + 1).join("");
+        const correct = newWords.slice(i, k + 1).join("");
+        if (wrong && correct && wrong !== correct) {
+          const updated = addToDict(wrong, correct);
+          setDict(updated);
+        }
+      }
+      // Update the note
+      setNotes((prev) =>
+        prev.map((n) => (n.id === note.id ? { ...n, cleaned: editText } : n))
+      );
+    }
+    setEditingId(null);
   };
 
   const deleteNote = (id: number) => {
@@ -303,7 +344,39 @@ export default function Home() {
           <div key={note.id} className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
-                <p className="text-sm whitespace-pre-wrap">{note.cleaned}</p>
+                {editingId === note.id ? (
+                  <div>
+                    <textarea
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                      rows={3}
+                      className="w-full text-sm border border-indigo-300 rounded-lg px-2 py-1 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                      autoFocus
+                    />
+                    <div className="flex gap-2 mt-1">
+                      <button
+                        onClick={() => saveEdit(note)}
+                        className="text-xs text-white bg-indigo-600 px-3 py-1 rounded-md"
+                      >
+                        保存（辞書に学習）
+                      </button>
+                      <button
+                        onClick={() => setEditingId(null)}
+                        className="text-xs text-gray-500 px-3 py-1"
+                      >
+                        キャンセル
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p
+                    className="text-sm whitespace-pre-wrap cursor-pointer hover:bg-gray-50 rounded px-1 -mx-1"
+                    onClick={() => startEdit(note)}
+                    title="タップして編集（修正内容を辞書に学習します）"
+                  >
+                    {note.cleaned}
+                  </p>
+                )}
                 {note.tasks && note.tasks.length > 0 && (
                   <ul className="mt-2 space-y-1">
                     {note.tasks.map((task, i) => (
@@ -366,6 +439,41 @@ export default function Home() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Dictionary Section */}
+      <div className="mt-6 border-t border-gray-200 pt-4">
+        <button
+          onClick={() => setShowDict(!showDict)}
+          className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>
+          </svg>
+          学習した辞書（{dict.length}件）
+          <span className="text-[10px]">{showDict ? "▲" : "▼"}</span>
+        </button>
+        {showDict && (
+          <div className="mt-2 space-y-1">
+            {dict.length === 0 && (
+              <p className="text-xs text-gray-400">メモを編集すると、修正内容が自動で辞書に登録されます。</p>
+            )}
+            {dict.map((d) => (
+              <div key={d.wrong} className="flex items-center gap-2 text-xs bg-white rounded-lg px-3 py-2 border border-gray-100">
+                <span className="text-red-400 line-through">{d.wrong}</span>
+                <span className="text-gray-400">→</span>
+                <span className="text-green-600 font-medium">{d.correct}</span>
+                <button
+                  onClick={() => setDict(removeFromDict(d.wrong))}
+                  className="ml-auto text-gray-300 hover:text-red-400"
+                  title="削除"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
