@@ -105,14 +105,20 @@ export default function Home() {
     setNotes((prev) => prev.filter((n) => n.id !== id));
   };
 
-  // Alt key: hold to record, release to stop
-  const altDownRef = useRef(false);
+  // Hotkey: Mac=fn, Windows=Alt (same as Typeless)
+  const hotkeyDownRef = useRef(false);
+  const [isMac, setIsMac] = useState(false);
   useEffect(() => {
+    setIsMac(navigator.platform.toUpperCase().includes("MAC"));
+  }, []);
+  useEffect(() => {
+    const isHotkey = (e: KeyboardEvent) =>
+      isMac ? e.key === "fn" || e.key === "Fn" : e.key === "Alt";
+
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Alt" && !altDownRef.current && !processing) {
+      if (isHotkey(e) && !hotkeyDownRef.current && !processing) {
         e.preventDefault();
-        altDownRef.current = true;
-        // Start recording
+        hotkeyDownRef.current = true;
         const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SR) return;
         const rec = new SR();
@@ -132,9 +138,9 @@ export default function Home() {
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "Alt" && altDownRef.current) {
+      if (isHotkey(e) && hotkeyDownRef.current) {
         e.preventDefault();
-        altDownRef.current = false;
+        hotkeyDownRef.current = false;
         recRef.current?.stop();
       }
     };
@@ -144,7 +150,7 @@ export default function Home() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [processing, processWithAI]);
+  }, [isMac, processing, processWithAI]);
 
   const hasSpeech = typeof window !== "undefined" &&
     (window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -202,7 +208,7 @@ export default function Home() {
         )}
       </div>
       <p className="text-center text-xs text-gray-400 mb-6">
-        {listening ? "聞いています..." : processing ? "AIが整形しています..." : "タップ or Altキー長押しで話す"}
+        {listening ? "聞いています..." : processing ? "AIが整形しています..." : `タップ or ${isMac ? "fn" : "Alt"}キー長押しで話す`}
       </p>
 
       {/* Notes List */}
