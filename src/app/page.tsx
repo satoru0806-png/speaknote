@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import type { VoiceContext } from "@/lib/voice-ai";
 
 type NoteEntry = {
@@ -105,6 +105,47 @@ export default function Home() {
     setNotes((prev) => prev.filter((n) => n.id !== id));
   };
 
+  // Alt key: hold to record, release to stop
+  const altDownRef = useRef(false);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Alt" && !altDownRef.current && !processing) {
+        e.preventDefault();
+        altDownRef.current = true;
+        // Start recording
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) return;
+        const rec = new SR();
+        rec.lang = "ja-JP";
+        rec.continuous = true;
+        rec.interimResults = false;
+        rec.onresult = (ev: SpeechRecognitionEvent) => {
+          const raw = ev.results[ev.results.length - 1][0].transcript;
+          setListening(false);
+          processWithAI(raw);
+        };
+        rec.onerror = () => setListening(false);
+        rec.onend = () => setListening(false);
+        recRef.current = rec;
+        rec.start();
+        setListening(true);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Alt" && altDownRef.current) {
+        e.preventDefault();
+        altDownRef.current = false;
+        recRef.current?.stop();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [processing, processWithAI]);
+
   const hasSpeech = typeof window !== "undefined" &&
     (window.SpeechRecognition || window.webkitSpeechRecognition);
 
@@ -161,7 +202,7 @@ export default function Home() {
         )}
       </div>
       <p className="text-center text-xs text-gray-400 mb-6">
-        {listening ? "聞いています..." : processing ? "AIが整形しています..." : "タップして話す"}
+        {listening ? "聞いています..." : processing ? "AIが整形しています..." : "タップ or Altキー長押しで話す"}
       </p>
 
       {/* Notes List */}
