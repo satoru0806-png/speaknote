@@ -23,6 +23,8 @@ export default function Home() {
   const [listening, setListening] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [notes, setNotes] = useState<NoteEntry[]>([]);
+  const [mode, setMode] = useState<"voice" | "type">("voice");
+  const [typedText, setTypedText] = useState("");
   const [copied, setCopied] = useState<number | null>(null);
   const recRef = useRef<SpeechRecognition | null>(null);
   const idRef = useRef(0);
@@ -204,33 +206,90 @@ export default function Home() {
         ))}
       </div>
 
-      {/* Record Button */}
-      <div className="flex justify-center mb-6">
-        {processing ? (
-          <div className="w-20 h-20 rounded-full bg-purple-100 flex items-center justify-center animate-pulse">
-            <span className="text-sm text-purple-600 font-medium">AI整形中</span>
-          </div>
-        ) : (
-          <button
-            onClick={toggleListening}
-            disabled={!hasSpeech}
-            className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg ${
-              listening
-                ? "bg-red-500 text-white animate-pulse scale-110"
-                : "bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105"
-            } disabled:bg-gray-300 disabled:cursor-not-allowed`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-              <line x1="12" x2="12" y1="19" y2="22"/>
-            </svg>
-          </button>
-        )}
+      {/* Mode Toggle */}
+      <div className="flex bg-gray-100 rounded-lg p-1 mb-4">
+        <button
+          onClick={() => setMode("voice")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-colors ${
+            mode === "voice" ? "bg-white text-indigo-600 shadow-sm" : "text-gray-500"
+          }`}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" x2="12" y1="19" y2="22"/>
+          </svg>
+          声で入力
+        </button>
+        <button
+          onClick={() => setMode("type")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-colors ${
+            mode === "type" ? "bg-white text-indigo-600 shadow-sm" : "text-gray-500"
+          }`}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="4" width="20" height="16" rx="2"/>
+            <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10"/>
+          </svg>
+          手で入力
+        </button>
       </div>
-      <p className="text-center text-xs text-gray-400 mb-6">
-        {listening ? "聞いています..." : processing ? "AIが整形しています..." : `タップ or ${isMac ? "fn" : "Alt"}キー長押しで話す`}
-      </p>
+
+      {/* Voice Mode */}
+      {mode === "voice" && (
+        <>
+          <div className="flex justify-center mb-6">
+            {processing ? (
+              <div className="w-20 h-20 rounded-full bg-purple-100 flex items-center justify-center animate-pulse">
+                <span className="text-sm text-purple-600 font-medium">AI整形中</span>
+              </div>
+            ) : (
+              <button
+                onClick={toggleListening}
+                disabled={!hasSpeech}
+                className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                  listening
+                    ? "bg-red-500 text-white animate-pulse scale-110"
+                    : "bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105"
+                } disabled:bg-gray-300 disabled:cursor-not-allowed`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" x2="12" y1="19" y2="22"/>
+                </svg>
+              </button>
+            )}
+          </div>
+          <p className="text-center text-xs text-gray-400 mb-6">
+            {listening ? "聞いています..." : processing ? "AIが整形しています..." : `タップ or ${isMac ? "fn" : "Alt"}キー長押しで話す`}
+          </p>
+        </>
+      )}
+
+      {/* Type Mode */}
+      {mode === "type" && (
+        <div className="mb-6">
+          <textarea
+            value={typedText}
+            onChange={(e) => setTypedText(e.target.value)}
+            placeholder="テキストを入力..."
+            rows={4}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"
+          />
+          <button
+            onClick={() => {
+              if (!typedText.trim()) return;
+              processWithAI(typedText.trim());
+              setTypedText("");
+            }}
+            disabled={!typedText.trim() || processing}
+            className="w-full mt-2 bg-indigo-600 text-white py-2.5 rounded-lg font-medium text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
+          >
+            {processing ? "AI整形中..." : "AI整形して保存"}
+          </button>
+        </div>
+      )}
 
       {/* Notes List */}
       <div className="flex-1 space-y-3">
