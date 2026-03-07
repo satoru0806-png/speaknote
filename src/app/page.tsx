@@ -101,6 +101,27 @@ export default function Home() {
     setTimeout(() => setCopied(null), 1500);
   };
 
+  const saveToKeep = async (note: NoteEntry) => {
+    const text = note.tasks?.length
+      ? note.cleaned + "\n\n" + note.tasks.map((t) => "- " + t).join("\n")
+      : note.cleaned;
+
+    // Try Web Share API first (mobile → directly share to Keep app)
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "SpeakNote", text });
+        return;
+      } catch {
+        // User cancelled or share failed, fall through
+      }
+    }
+    // Fallback: copy + open Google Keep
+    await navigator.clipboard.writeText(text);
+    window.open("https://keep.google.com/#NOTE", "_blank");
+    setCopied(note.id);
+    setTimeout(() => setCopied(null), 1500);
+  };
+
   const deleteNote = (id: number) => {
     setNotes((prev) => prev.filter((n) => n.id !== id));
   };
@@ -259,6 +280,17 @@ export default function Home() {
                       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
                     </svg>
                   )}
+                </button>
+                <button
+                  onClick={() => saveToKeep(note)}
+                  className="p-1.5 rounded-lg hover:bg-yellow-50 text-gray-400 hover:text-yellow-600 transition-colors"
+                  title="Google Keepに保存"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                    <path d="M12 3v12"/>
+                    <path d="M8 11l4 4 4-4"/>
+                  </svg>
                 </button>
                 <button
                   onClick={() => deleteNote(note.id)}
