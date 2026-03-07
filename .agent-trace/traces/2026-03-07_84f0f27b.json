@@ -1,0 +1,33 @@
+{
+  "version": "0.1.0",
+  "id": "84f0f27b-5242-41b1-a86d-00566399d93f",
+  "timestamp": "2026-03-07T13:50:41.261Z",
+  "files": [
+    {
+      "path": "src\\lib\\voice-ai.ts",
+      "conversations": [
+        {
+          "contributor_type": "ai",
+          "model": "anthropic/claude-opus-4-5-20251101",
+          "ranges": [
+            {
+              "start_line": 1,
+              "end_line": -1
+            }
+          ],
+          "description": "Write: file creation/overwrite"
+        }
+      ]
+    }
+  ],
+  "tool": {
+    "name": "taisun-agent",
+    "version": "2.10.1"
+  },
+  "metadata": {
+    "dev.taisun": {
+      "hook": "agent-trace-capture",
+      "tool_used": "Write"
+    }
+  }
+}

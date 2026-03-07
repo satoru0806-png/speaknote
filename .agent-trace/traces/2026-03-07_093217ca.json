@@ -1,0 +1,33 @@
+{
+  "version": "0.1.0",
+  "id": "093217ca-23c8-4a7e-a754-3b493baa991d",
+  "timestamp": "2026-03-07T13:51:35.058Z",
+  "files": [
+    {
+      "path": "public\\manifest.json",
+      "conversations": [
+        {
+          "contributor_type": "ai",
+          "model": "anthropic/claude-opus-4-5-20251101",
+          "ranges": [
+            {
+              "start_line": 1,
+              "end_line": -1
+            }
+          ],
+          "description": "Write: file creation/overwrite"
+        }
+      ]
+    }
+  ],
+  "tool": {
+    "name": "taisun-agent",
+    "version": "2.10.1"
+  },
+  "metadata": {
+    "dev.taisun": {
+      "hook": "agent-trace-capture",
+      "tool_used": "Write"
+    }
+  }
+}
