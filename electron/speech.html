@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>SpeakNote</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI',sans-serif; background:#1a1a2e; color:#fff; height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; user-select:none; }
+#btn { width:80px; height:80px; border-radius:50%; border:none; cursor:pointer; color:#fff; transition:all 0.2s; display:flex; align-items:center; justify-content:center; }
+#btn.idle { background:linear-gradient(135deg,#667eea,#764ba2); }
+#btn.idle:hover { transform:scale(1.05); box-shadow:0 0 20px rgba(102,126,234,0.5); }
+#btn.listening { background:#e74c3c; animation:pulse 1s infinite; box-shadow:0 0 30px rgba(231,76,60,0.6); }
+#btn.processing { background:#f39c12; cursor:wait; }
+#status { margin-top:12px; font-size:12px; color:#888; }
+#preview { margin-top:8px; font-size:11px; color:#aaa; max-width:280px; text-align:center; word-break:break-all; min-height:16px; }
+#conn { position:absolute; top:8px; right:8px; width:8px; height:8px; border-radius:50%; background:#e74c3c; }
+#conn.ok { background:#2ecc71; }
+
+/* Settings panel */
+#settings { margin-top:14px; width:260px; }
+.setting-row {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.06);
+}
+.setting-label { font-size:11px; color:#aaa; }
+.toggle { position:relative; width:36px; height:20px; cursor:pointer; }
+.toggle input { display:none; }
+.toggle .slider {
+  position:absolute; inset:0; background:#444; border-radius:10px; transition:0.2s;
+}
+.toggle .slider:before {
+  content:''; position:absolute; width:16px; height:16px; left:2px; top:2px;
+  background:#fff; border-radius:50%; transition:0.2s;
+}
+.toggle input:checked + .slider { background:#667eea; }
+.toggle input:checked + .slider:before { transform:translateX(16px); }
+
+/* Action buttons */
+#actions { display:flex; gap:6px; margin-top:10px; }
+#actions button {
+  background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);
+  color:#ccc; font-size:10px; padding:4px 10px; border-radius:12px; cursor:pointer; transition:all 0.2s;
+}
+#actions button:hover { background:rgba(255,255,255,0.15); color:#fff; }
+
+#shortcuts { margin-top:10px; font-size:9px; color:#555; text-align:center; line-height:1.6; }
+#shortcuts span { color:#777; }
+
+@keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+
+/* Dictionary modal */
+#dictModal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center; }
+#dictModal.show { display:flex; }
+.dict-panel { background:#2a2a4a; border-radius:12px; padding:16px; width:270px; max-height:70vh; overflow-y:auto; }
+</style>
+</head>
+<body>
+<div id="conn"></div>
+<button id="btn" class="idle" onclick="toggleRecord()">
+  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+    <line x1="12" x2="12" y1="19" y2="22"/>
+  </svg>
+</button>
+<div id="status">接続中...</div>
+<div id="preview"></div>
+
+<!-- Settings -->
+<div id="settings">
+  <div class="setting-row">
+    <span class="setting-label">AI整形</span>
+    <label class="toggle"><input type="checkbox" id="chkAI" checked onchange="toggleAI()"><span class="slider"></span></label>
+  </div>
+  <div class="setting-row">
+    <span class="setting-label">自動学習</span>
+    <label class="toggle"><input type="checkbox" id="chkLearn" onchange="toggleLearn()"><span class="slider"></span></label>
+  </div>
+</div>
+
+<div id="actions">
+  <button onclick="saveToKeep()">Keep保存</button>
+  <button onclick="openDict()">辞書</button>
+</div>
+
+<div id="shortcuts">
+  <span>Alt</span>=録音 / <span>F9</span>=トグル / <span>F10</span>=Keep<br>
+  <span>F11</span>=AI切替 / <span>F12</span>=修正を辞書登録
+</div>
+
+<!-- Dictionary modal -->
+<div id="dictModal">
+  <div class="dict-panel">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <span style="font-size:13px; font-weight:bold;">ユーザー辞書</span>
+      <button onclick="closeDict()" style="background:none; border:none; color:#888; cursor:pointer; font-size:16px;">✕</button>
+    </div>
+    <div style="display:flex; gap:4px; margin-bottom:8px;">
+      <input id="dictFrom" placeholder="誤変換" style="flex:1; background:#1a1a2e; border:1px solid #444; color:#fff; padding:4px 6px; border-radius:6px; font-size:11px;">
+      <span style="color:#666; line-height:28px;">→</span>
+      <input id="dictTo" placeholder="正しい表記" style="flex:1; background:#1a1a2e; border:1px solid #444; color:#fff; padding:4px 6px; border-radius:6px; font-size:11px;">
+      <button onclick="addDictEntry()" style="background:#667eea; border:none; color:#fff; padding:4px 8px; border-radius:6px; cursor:pointer; font-size:11px;">追加</button>
+    </div>
+    <div id="dictList" style="font-size:10px; color:#aaa;"></div>
+  </div>
+</div>
+
+<script>
+const btn = document.getElementById('btn');
+const statusEl = document.getElementById('status');
+const previewEl = document.getElementById('preview');
+const connEl = document.getElementById('conn');
+const chkAI = document.getElementById('chkAI');
+const chkLearn = document.getElementById('chkLearn');
+
+let ws = null;
+let rec = null;
+let isListening = false;
+let accumulated = '';
+let aiEnabled = true;
+let autoLearnEnabled = JSON.parse(localStorage.getItem('speaknote_autolearn') || 'false');
+let lastResult = '';
+let hintCount = parseInt(localStorage.getItem('speaknote_hint_count') || '0');
+
+// Init toggle states
+chkLearn.checked = autoLearnEnabled;
+
+// --- Audio ---
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new AudioContext();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+function playTone(freq, dur) {
+  const ctx = ensureAudio();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.frequency.value = freq;
+  gain.gain.value = 0.3;
+  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + dur);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(); osc.stop(ctx.currentTime + dur);
+}
+function playStart() { }
+function playStop() { }
+
+// --- Settings ---
+function toggleAI() {
+  aiEnabled = chkAI.checked;
+  wsSend({ type: 'setting', key: 'aiEnabled', value: aiEnabled });
+  statusEl.textContent = aiEnabled ? 'AI整形ON' : 'AI整形OFF（そのまま出力）';
+  setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 1500);
+}
+
+function toggleLearn() {
+  autoLearnEnabled = chkLearn.checked;
+  localStorage.setItem('speaknote_autolearn', JSON.stringify(autoLearnEnabled));
+  wsSend({ type: 'setting', key: 'autoLearnEnabled', value: autoLearnEnabled });
+  statusEl.textContent = autoLearnEnabled ? '自動学習ON' : '自動学習OFF';
+  setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 1500);
+}
+
+// --- Hint after paste (first 5 times) ---
+function showPasteHint() {
+  if (hintCount < 5) {
+    hintCount++;
+    localStorage.setItem('speaknote_hint_count', String(hintCount));
+    statusEl.textContent = '貼り付け完了! (修正したらF12で学習)';
+  } else {
+    statusEl.textContent = '貼り付け完了!';
+  }
+  previewEl.textContent = '';
+  setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 3000);
+}
+
+// --- Google Keep ---
+function saveToKeep() {
+  if (!lastResult) {
+    statusEl.textContent = 'テキストなし（先に音声入力してください）';
+    setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 1500);
+    return;
+  }
+  wsSend({ type: 'keep_save', text: lastResult });
+  statusEl.textContent = 'Keep保存中...';
+}
+
+// --- User Dictionary ---
+let userDict = JSON.parse(localStorage.getItem('speaknote_dict') || '[]');
+
+function openDict() { document.getElementById('dictModal').className = 'show'; renderDict(); }
+function closeDict() { document.getElementById('dictModal').className = ''; }
+function addDictEntry() {
+  const from = document.getElementById('dictFrom').value.trim();
+  const to = document.getElementById('dictTo').value.trim();
+  if (!from || !to) return;
+  userDict = userDict.filter(e => e.from !== from);
+  userDict.push({ from, to });
+  localStorage.setItem('speaknote_dict', JSON.stringify(userDict));
+  document.getElementById('dictFrom').value = '';
+  document.getElementById('dictTo').value = '';
+  renderDict();
+  wsSend({ type: 'dict_update', dict: userDict });
+}
+function removeDict(idx) {
+  userDict.splice(idx, 1);
+  localStorage.setItem('speaknote_dict', JSON.stringify(userDict));
+  renderDict();
+  wsSend({ type: 'dict_update', dict: userDict });
+}
+function renderDict() {
+  const list = document.getElementById('dictList');
+  if (userDict.length === 0) { list.innerHTML = '<div style="color:#666; padding:6px;">辞書は空です</div>'; return; }
+  list.innerHTML = userDict.map((e, i) =>
+    `<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #333;">
+      <span>${e.from} → ${e.to}</span>
+      <button onclick="removeDict(${i})" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-size:10px;">削除</button>
+    </div>`
+  ).join('');
+}
+function applyDict(text) {
+  let result = text;
+  for (const entry of userDict) { result = result.split(entry.from).join(entry.to); }
+  return result;
+}
+
+// --- Dictionary Learning (diff detection) ---
+let pendingLearnPairs = [];
+
+function findDiffs(raw, cleaned) {
+  const pairs = [];
+  const stripPunct = s => s.replace(/[。、！？!?,.\s]/g, '');
+  const rawClean = stripPunct(raw);
+  const cleanedClean = stripPunct(cleaned);
+  if (rawClean === cleanedClean) return [];
+
+  let i = 0, j = 0;
+  while (i < rawClean.length && j < cleanedClean.length) {
+    if (rawClean[i] !== cleanedClean[j]) {
+      let found = false;
+      for (let look = 1; look <= 10 && !found; look++) {
+        if (i + look < rawClean.length && rawClean[i + look] === cleanedClean[j]) {
+          pairs.push({ from: rawClean.substring(i, i + look), to: '' });
+          i += look; found = true;
+        } else if (j + look < cleanedClean.length && rawClean[i] === cleanedClean[j + look]) {
+          pairs.push({ from: '', to: cleanedClean.substring(j, j + look) });
+          j += look; found = true;
+        } else if (i + look < rawClean.length && j + look < cleanedClean.length && rawClean[i + look] === cleanedClean[j + look]) {
+          const oldPart = rawClean.substring(i, i + look);
+          const newPart = cleanedClean.substring(j, j + look);
+          if (oldPart && newPart && oldPart !== newPart) pairs.push({ from: oldPart, to: newPart });
+          i += look; j += look; found = true;
+        }
+      }
+      if (!found) { i++; j++; }
+    } else { i++; j++; }
+  }
+  const fillers = ['えーと','あのー','あの','まあ','なんか','えー','うーん','ええと'];
+  return pairs.filter(p => p.from && p.to && p.from.length >= 1 && !fillers.includes(p.from));
+}
+
+// --- WebSocket ---
+function connectWS() {
+  const port = location.port || '3457';
+  ws = new WebSocket('ws://localhost:' + port);
+
+  ws.onopen = () => {
+    connEl.className = 'ok';
+    statusEl.textContent = 'Alt=録音 / F9=トグル';
+    ws.send(JSON.stringify({ type: 'debug', msg: 'Edge connected' }));
+    wsSend({ type: 'setting', key: 'aiEnabled', value: aiEnabled });
+    wsSend({ type: 'setting', key: 'autoLearnEnabled', value: autoLearnEnabled });
+    wsSend({ type: 'dict_update', dict: userDict });
+  };
+
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'command') {
+        const cmd = msg.command;
+        if (cmd === 'start' && !isListening) startListening();
+        else if (cmd === 'stop' && isListening) stopAndSend();
+        else if (cmd === 'toggle') toggleRecord();
+        else if (cmd === 'done') {
+          btn.className = 'idle';
+          showPasteHint();
+        }
+        else if (cmd === 'keep_done') {
+          btn.className = 'idle';
+          statusEl.textContent = 'Keep保存! (Ctrl+Vで貼り付け)';
+          setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 3000);
+        }
+        else if (cmd === 'beep_stop') { playStop(); }
+        else if (cmd === 'ai_on') {
+          aiEnabled = true; chkAI.checked = true;
+          statusEl.textContent = 'AI整形ON';
+          setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 1500);
+        }
+        else if (cmd === 'ai_off') {
+          aiEnabled = false; chkAI.checked = false;
+          statusEl.textContent = 'AI整形OFF';
+          setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 1500);
+        }
+      } else if (msg.type === 'learn_compare') {
+        // Auto-register diffs to dictionary
+        if (msg.original && msg.corrected && msg.original !== msg.corrected) {
+          const diffs = findDiffs(msg.original, msg.corrected);
+          if (diffs.length > 0) {
+            for (const pair of diffs) {
+              userDict = userDict.filter(e => e.from !== pair.from);
+              userDict.push(pair);
+            }
+            localStorage.setItem('speaknote_dict', JSON.stringify(userDict));
+            wsSend({ type: 'dict_update', dict: userDict });
+            const learned = diffs.map(d => d.from + '→' + d.to).join(', ');
+            statusEl.textContent = '学習完了: ' + learned;
+            setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 3000);
+          }
+        }
+      } else if (msg.type === 'pasted') {
+        lastResult = msg.text || '';
+      }
+    } catch {}
+  };
+
+  ws.onclose = () => {
+    connEl.className = '';
+    statusEl.textContent = '再接続中...';
+    setTimeout(connectWS, 1000);
+  };
+}
+
+function wsSend(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+// --- Toggle ---
+function toggleRecord() {
+  if (isListening) stopAndSend();
+  else startListening();
+}
+
+// --- Speech Recognition ---
+function startListening() {
+  if (rec) { try { rec.onend = null; rec.abort(); } catch(e) {} rec = null; }
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { statusEl.textContent = 'Speech API未対応'; return; }
+
+  accumulated = '';
+  rec = new SR();
+  rec.lang = 'ja-JP';
+  rec.continuous = true;
+  rec.interimResults = true;
+
+  rec.onresult = (e) => {
+    let finals = '', interim = '';
+    for (let i = 0; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finals += e.results[i][0].transcript;
+      else interim += e.results[i][0].transcript;
+    }
+    accumulated = finals + interim;
+    previewEl.textContent = (finals || '') + (interim ? ' ...' + interim : '');
+  };
+
+  rec.onerror = (e) => {
+    wsSend({ type: 'debug', msg: 'STT error: ' + e.error });
+    if (e.error === 'not-allowed') statusEl.textContent = 'マイク許可が必要';
+    if (e.error !== 'aborted') { isListening = false; btn.className = 'idle'; }
+  };
+
+  rec.onend = () => {
+    if (isListening && rec) { try { rec.start(); } catch(e) { isListening = false; btn.className = 'idle'; } }
+  };
+
+  try {
+    rec.start();
+    isListening = true;
+    btn.className = 'listening';
+    statusEl.textContent = '録音中...';
+    playStart();
+    wsSend({ type: 'debug', msg: 'rec.start() OK' });
+  } catch(e) {
+    statusEl.textContent = '録音失敗: ' + e.message;
+  }
+}
+
+function stopAndSend() {
+  isListening = false;
+  let text = accumulated;
+  accumulated = '';
+
+  if (rec) { rec.onend = null; try { rec.stop(); } catch(e) {} rec = null; }
+
+  if (text && text.trim()) text = applyDict(text);
+
+  wsSend({ type: 'debug', msg: 'stop text="' + (text || '').substring(0, 50) + '"' });
+
+  if (text && text.trim()) {
+    lastResult = text;
+    btn.className = 'processing';
+    statusEl.textContent = aiEnabled ? 'AI整形中...' : '出力中...';
+    wsSend({ type: 'result', text: text });
+  } else {
+    btn.className = 'idle';
+    statusEl.textContent = 'テキストなし';
+    previewEl.textContent = '';
+    setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 1500);
+  }
+}
+
+connectWS();
+</script>
+</body>
+</html>

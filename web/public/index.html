@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#667eea">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.json">
+<title>SpeakNote</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #1a1a2e; color: #fff;
+  min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; padding: 40px 16px 20px;
+  -webkit-user-select: none; user-select: none;
+}
+
+h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+.subtitle { font-size: 12px; color: #888; margin-bottom: 30px; }
+
+/* Mic button */
+#mic {
+  width: 100px; height: 100px; border-radius: 50%; border: none;
+  color: #fff; cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+#mic.idle { background: linear-gradient(135deg, #667eea, #764ba2); }
+#mic.idle:active { transform: scale(0.95); }
+#mic.listening { background: #e74c3c; animation: pulse 1s infinite; box-shadow: 0 0 40px rgba(231,76,60,0.5); }
+#mic.processing { background: #f39c12; cursor: wait; }
+
+#status { margin-top: 16px; font-size: 13px; color: #888; text-align: center; }
+
+/* Result area */
+#resultArea {
+  margin-top: 20px; width: 100%; max-width: 400px;
+  display: none; flex-direction: column; gap: 8px;
+}
+#resultArea.show { display: flex; }
+
+#resultText {
+  background: #16213e; border: 1px solid #333; border-radius: 12px;
+  padding: 14px; font-size: 15px; line-height: 1.6; color: #eee;
+  min-height: 60px; max-height: 40vh; overflow-y: auto;
+  -webkit-user-select: text; user-select: text;
+  word-break: break-word;
+}
+
+.btn-row { display: flex; gap: 8px; }
+.btn-row button {
+  flex: 1; padding: 12px; border-radius: 10px; border: none;
+  font-size: 14px; font-weight: 500; cursor: pointer;
+  transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+}
+#btnCopy { background: #667eea; color: #fff; }
+#btnCopy:active { background: #5568d0; }
+#btnCopy.copied { background: #2ecc71; }
+#btnClear { background: rgba(255,255,255,0.08); color: #aaa; border: 1px solid #333; }
+#btnClear:active { background: rgba(255,255,255,0.15); }
+
+/* History */
+#history { margin-top: 24px; width: 100%; max-width: 400px; }
+#history h3 { font-size: 12px; color: #666; margin-bottom: 8px; }
+#historyList { display: flex; flex-direction: column; gap: 6px; }
+.hist-item {
+  background: #16213e; border-radius: 8px; padding: 10px 12px;
+  font-size: 13px; color: #aaa; line-height: 1.4;
+  cursor: pointer; transition: background 0.15s;
+  -webkit-user-select: text; user-select: text;
+}
+.hist-item:active { background: #1e2d50; }
+
+/* Settings */
+#settingsBar {
+  margin-top: 20px; display: flex; align-items: center; gap: 14px;
+}
+.toggle-wrap { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #888; }
+.sw { position: relative; width: 36px; height: 20px; cursor: pointer; }
+.sw input { display: none; }
+.sw .track { position: absolute; inset: 0; background: #444; border-radius: 10px; transition: 0.2s; }
+.sw .track:before {
+  content: ''; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px;
+  background: #fff; border-radius: 50%; transition: 0.2s;
+}
+.sw input:checked + .track { background: #667eea; }
+.sw input:checked + .track:before { transform: translateX(16px); }
+
+/* Preview (interim) */
+#preview {
+  margin-top: 12px; font-size: 12px; color: #666;
+  max-width: 400px; text-align: center; word-break: break-all;
+  min-height: 18px;
+}
+
+@keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
+
+/* Toast */
+#toast {
+  position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+  background: #2ecc71; color: #fff; padding: 8px 20px; border-radius: 20px;
+  font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none;
+}
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- LINE/in-app browser warning -->
+<div id="inappWarning" style="display:none; text-align:center; padding:40px 20px;">
+  <h1 style="margin-bottom:12px;">SpeakNote</h1>
+  <p style="color:#aaa; font-size:14px; margin-bottom:20px; line-height:1.6;">
+    このアプリはChromeまたはSafariで<br>開く必要があります
+  </p>
+  <a id="openExternal" href="" style="display:inline-block; background:#667eea; color:#fff; padding:14px 30px; border-radius:12px; text-decoration:none; font-size:15px; font-weight:500;">
+    ブラウザで開く
+  </a>
+  <p style="color:#666; font-size:11px; margin-top:16px; line-height:1.6;">
+    右上の「…」メニュー →「ブラウザで開く」<br>でも開けます
+  </p>
+</div>
+
+<!-- Main app -->
+<div id="mainApp">
+<h1>SpeakNote</h1>
+<p class="subtitle">タップして話すだけ</p>
+
+<button id="mic" class="idle" onclick="toggleRecord()">
+  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+    <line x1="12" x2="12" y1="19" y2="22"/>
+  </svg>
+</button>
+
+<div id="status">マイクをタップして録音開始</div>
+<div id="preview"></div>
+
+<div id="settingsBar">
+  <div class="toggle-wrap">
+    AI整形
+    <label class="sw"><input type="checkbox" id="chkAI" checked><span class="track"></span></label>
+  </div>
+</div>
+
+<div id="resultArea">
+  <div id="resultText"></div>
+  <div class="btn-row">
+    <button id="btnCopy" ontouchend="copyResult(); event.preventDefault();" onclick="copyResult()">コピー</button>
+    <button id="btnClear" ontouchend="clearResult(); event.preventDefault();" onclick="clearResult()">クリア</button>
+  </div>
+</div>
+
+<div id="history">
+  <h3>履歴</h3>
+  <div id="historyList"></div>
+</div>
+
+<div id="toast">コピーしました</div>
+</div><!-- end mainApp -->
+
+<script>
+// --- In-app browser detection ---
+(function() {
+  const ua = navigator.userAgent || '';
+  const isLine = /Line\//i.test(ua);
+  const isFB = /FBAN|FBAV/i.test(ua);
+  const isInsta = /Instagram/i.test(ua);
+  const isTwitter = /Twitter/i.test(ua);
+  const isInApp = isLine || isFB || isInsta || isTwitter;
+
+  if (isInApp) {
+    document.getElementById('inappWarning').style.display = 'block';
+    document.getElementById('mainApp').style.display = 'none';
+    document.getElementById('openExternal').href = location.href;
+
+    // LINE: intent URL to open in external browser
+    if (isLine) {
+      document.getElementById('openExternal').href =
+        'https://line.me/R/oaMessage/@line?text=' + encodeURIComponent(location.href);
+      // Alternative: direct intent
+      const url = location.href;
+      document.getElementById('openExternal').href = url;
+      document.getElementById('openExternal').onclick = function(e) {
+        e.preventDefault();
+        // Try to open in default browser via intent (Android)
+        if (/Android/i.test(ua)) {
+          location.href = 'intent://' + url.replace(/^https?:\/\//, '') +
+            '#Intent;scheme=https;package=com.android.chrome;end';
+        } else {
+          // iOS: guide user to use Safari
+          window.open(url, '_system');
+        }
+      };
+    }
+  }
+})();
+</script>
+
+<script>
+const mic = document.getElementById('mic');
+const statusEl = document.getElementById('status');
+const previewEl = document.getElementById('preview');
+const resultArea = document.getElementById('resultArea');
+const resultText = document.getElementById('resultText');
+const btnCopy = document.getElementById('btnCopy');
+const chkAI = document.getElementById('chkAI');
+const toast = document.getElementById('toast');
+
+let rec = null;
+let isListening = false;
+let accumulated = '';
+let history = JSON.parse(localStorage.getItem('speaknote_history') || '[]');
+
+renderHistory();
+
+// --- Audio feedback ---
+let audioCtx = null;
+function playTone(freq, dur) {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.frequency.value = freq;
+  gain.gain.value = 0.3;
+  gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + dur);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + dur);
+}
+function playStart() { playTone(880, 0.1); }
+function playStop() { playTone(600, 0.15); }
+
+// --- Toggle ---
+function toggleRecord() {
+  if (isListening) stopAndSend();
+  else startListening();
+}
+
+// --- Speech Recognition ---
+function startListening() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    statusEl.textContent = 'このブラウザは音声認識に対応していません';
+    return;
+  }
+
+  if (rec) { try { rec.onend = null; rec.abort(); } catch(e) {} rec = null; }
+
+  accumulated = '';
+  rec = new SR();
+  rec.lang = 'ja-JP';
+  rec.continuous = true;
+  rec.interimResults = true;
+
+  rec.onresult = (e) => {
+    let finals = '', interim = '';
+    for (let i = 0; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finals += e.results[i][0].transcript;
+      else interim += e.results[i][0].transcript;
+    }
+    accumulated = finals + interim;
+    previewEl.textContent = accumulated;
+  };
+
+  rec.onerror = (e) => {
+    if (e.error === 'not-allowed') {
+      statusEl.textContent = 'マイクの許可が必要です';
+    } else if (e.error !== 'aborted') {
+      statusEl.textContent = 'エラー: ' + e.error;
+    }
+    if (e.error !== 'aborted') { isListening = false; mic.className = 'idle'; }
+  };
+
+  rec.onend = () => {
+    if (isListening && rec) {
+      try { rec.start(); } catch(e) { isListening = false; mic.className = 'idle'; }
+    }
+  };
+
+  try {
+    rec.start();
+    isListening = true;
+    mic.className = 'listening';
+    statusEl.textContent = '録音中... もう一度タップで完了';
+    previewEl.textContent = '';
+    playStart();
+  } catch(e) {
+    statusEl.textContent = '録音開始できません: ' + e.message;
+  }
+}
+
+async function stopAndSend() {
+  isListening = false;
+  const text = accumulated;
+  accumulated = '';
+
+  if (rec) { rec.onend = null; try { rec.stop(); } catch(e) {} rec = null; }
+  playStop();
+  previewEl.textContent = '';
+
+  if (!text || !text.trim()) {
+    mic.className = 'idle';
+    statusEl.textContent = 'テキストなし。もう一度お試しください。';
+    setTimeout(() => { statusEl.textContent = 'マイクをタップして録音開始'; }, 2000);
+    return;
+  }
+
+  // AI cleanup
+  if (chkAI.checked) {
+    mic.className = 'processing';
+    statusEl.textContent = 'AI整形中...';
+    try {
+      const res = await fetch('/api/clean', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      showResult(data.cleaned || text);
+    } catch(e) {
+      showResult(text);
+    }
+  } else {
+    showResult(text);
+  }
+}
+
+function showResult(text) {
+  mic.className = 'idle';
+  statusEl.textContent = 'マイクをタップして録音開始';
+  resultText.textContent = text;
+  resultArea.style.display = 'flex'; resultArea.classList.add('show');
+
+  // Add to history
+  history.unshift({ text, time: Date.now() });
+  if (history.length > 20) history = history.slice(0, 20);
+  localStorage.setItem('speaknote_history', JSON.stringify(history));
+  renderHistory();
+}
+
+// --- Copy ---
+async function copyResult() {
+  const text = resultText.textContent;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    btnCopy.textContent = 'コピー済み';
+    btnCopy.className = 'copied';
+    showToast();
+    setTimeout(() => { btnCopy.textContent = 'コピー'; btnCopy.className = ''; }, 1500);
+  } catch(e) {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast();
+  }
+}
+
+function clearResult() {
+  resultArea.style.display = 'none';
+  resultArea.classList.remove('show');
+  resultText.textContent = '';
+}
+
+function showToast() {
+  toast.className = 'show';
+  setTimeout(() => { toast.className = ''; }, 1500);
+}
+
+// --- History ---
+function renderHistory() {
+  const list = document.getElementById('historyList');
+  if (history.length === 0) {
+    list.innerHTML = '<div style="color:#555; font-size:12px;">まだ履歴がありません</div>';
+    return;
+  }
+  list.innerHTML = history.slice(0, 10).map((h, i) => {
+    const preview = h.text.length > 60 ? h.text.substring(0, 60) + '...' : h.text;
+    const time = new Date(h.time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+    return `<div class="hist-item" onclick="useHistory(${i})"><span style="color:#555; font-size:10px;">${time}</span> ${preview}</div>`;
+  }).join('');
+}
+
+function useHistory(idx) {
+  const item = history[idx];
+  if (item) {
+    resultText.textContent = item.text;
+    resultArea.style.display = 'flex'; resultArea.classList.add('show');
+  }
+}
+
+// --- Service Worker (PWA) ---
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>

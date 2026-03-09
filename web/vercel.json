@@ -1,0 +1,15 @@
+{
+  "buildCommand": "",
+  "outputDirectory": "public",
+  "rewrites": [
+    { "source": "/api/clean", "destination": "/api/clean" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" }
+      ]
+    }
+  ]
+}
