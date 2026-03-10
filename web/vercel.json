@@ -2,7 +2,8 @@
   "buildCommand": "",
   "outputDirectory": "public",
   "rewrites": [
-    { "source": "/api/clean", "destination": "/api/clean" }
+    { "source": "/api/clean", "destination": "/api/clean" },
+    { "source": "/api/chat", "destination": "/api/chat" }
   ],
   "headers": [
     {
