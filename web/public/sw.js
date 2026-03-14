@@ -1,5 +1,5 @@
-const CACHE = 'speaknote-v1';
-const ASSETS = ['/', '/manifest.json'];
+const CACHE = 'speaknote-v2';
+const ASSETS = ['/', '/manifest.json', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));

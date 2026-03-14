@@ -6,6 +6,8 @@
 <meta name="theme-color" content="#667eea">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SpeakNote">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.json">
 <title>SpeakNote</title>
 <style>
@@ -160,6 +162,12 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
 </div>
 
 <div id="toast">コピーしました</div>
+
+<div style="margin-top:40px; padding-top:16px; border-top:1px solid #333; text-align:center; width:100%; max-width:400px;">
+  <a href="/terms.html" style="color:#666; font-size:11px; text-decoration:none; margin:0 10px;">利用規約</a>
+  <a href="/privacy.html" style="color:#666; font-size:11px; text-decoration:none; margin:0 10px;">プライバシーポリシー</a>
+  <p style="color:#444; font-size:10px; margin-top:8px;">&copy; 2026 SpeakNote</p>
+</div>
 </div><!-- end mainApp -->
 
 <script>
@@ -243,7 +251,7 @@ function toggleRecord() {
 function startListening() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
-    statusEl.textContent = 'このブラウザは音声認識に対応していません';
+    statusEl.textContent = 'このブラウザは音声認識に対応していません。Chromeをお使いください。';
     return;
   }
 
@@ -252,7 +260,9 @@ function startListening() {
   accumulated = '';
   rec = new SR();
   rec.lang = 'ja-JP';
-  rec.continuous = true;
+  // Safari doesn't support continuous well, so use shorter sessions with auto-restart
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  rec.continuous = !isSafari;
   rec.interimResults = true;
 
   rec.onresult = (e) => {

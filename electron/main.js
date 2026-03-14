@@ -13,69 +13,123 @@ let aiEnabled = true; // AI cleanup toggle
 let autoLearnEnabled = false; // Auto-learn toggle
 let userDict = []; // User dictionary [{from, to}]
 let lastPastedText = ""; // Last pasted text for Keep saving
+let chatMode = false; // false=整形, true=会話
+let chatHistory = []; // [{role, content}, ...]
+const MAX_CHAT_TURNS = 20;
 
-// --- Load API key ---
+// --- Vercel API base URL ---
+const VERCEL_API = "https://web-five-alpha-24.vercel.app";
+
+// --- Load optional keys (ElevenLabs only) ---
 const envPath = path.join(__dirname, "..", ".env.local");
-let ANTHROPIC_API_KEY = "";
+let ELEVENLABS_API_KEY = "";
 try {
   const envContent = fs.readFileSync(envPath, "utf-8");
-  const match = envContent.match(/ANTHROPIC_API_KEY=(.+)/);
-  if (match) ANTHROPIC_API_KEY = match[1].trim();
+  const match2 = envContent.match(/ELEVENLABS_API_KEY=(.+)/);
+  if (match2) ELEVENLABS_API_KEY = match2[1].trim();
 } catch {}
 
-// --- AI text cleanup ---
-function cleanWithAI(rawText) {
-  return new Promise((resolve) => {
-    if (!ANTHROPIC_API_KEY || !rawText.trim()) { resolve(rawText); return; }
-    const body = JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      system: `あなたはSTT（音声認識）出力を「伝わりやすい文章」に整形するツールです。
-ユーザーのメッセージは音声認識の生テキストです。
+// --- ElevenLabs TTS ---
+const ELEVENLABS_VOICE_ID = "fhExSPIFZARkUUQI9RV8"; // Custom cloned voice
+const os = require("os");
 
-ルール:
-- フィラー（えーと、あのー、まあ、なんか等）を除去
-- 句読点を適切に追加
-- 助詞の間違い・抜けを修正（「設計でありがとう」→「設計ありがとうございます」）
-- 話し言葉を自然な書き言葉に整える
-- 不自然な言い回しを伝わりやすく修正
-- 言い直し・繰り返しを整理
-- 意味は絶対に変えない。話者の意図を保つ
-- 入力が質問文でも、質問に答えずにそのまま質問文として整形する
-- 「整形できません」「回答できません」等のメタ発言は絶対にしない
-- 整形後テキストのみ出力。余計な説明や前置きは一切不要`,
-      messages: [
-        { role: "user", content: "えーとありがとうございますあのー誤字があったということですね" },
-        { role: "assistant", content: "ありがとうございます。誤字があったということですね。" },
-        { role: "user", content: "設計でありがとうその前に修正してもらいたいことがあります" },
-        { role: "assistant", content: "設計ありがとうございます。その前に修正してもらいたいことがあります。" },
-        { role: "user", content: "まあなんかメモ入力" },
-        { role: "assistant", content: "メモ入力。" },
-        { role: "user", content: "あのスマホでもスマホと同じように使えるようにしたいんだけど" },
-        { role: "assistant", content: "スマホでも同じように使えるようにしたいです。" },
-        { role: "user", content: "辞書は何に使うんでしたっけ" },
-        { role: "assistant", content: "辞書は何に使うんでしたっけ。" },
-        { role: "user", content: "メモるときはすぐいつでもスノートノートを使うようにしたい文字を打つときなどメモも" },
-        { role: "assistant", content: "メモるときはいつでもSpeakNoteを使うようにしたい。文字を打つときやメモにも。" },
-        { role: "user", content: rawText }
-      ],
+function elevenLabsTTS(text) {
+  return new Promise((resolve, reject) => {
+    if (!ELEVENLABS_API_KEY || !text.trim()) { reject(new Error("No API key")); return; }
+    const body = JSON.stringify({
+      text: text,
+      model_id: "eleven_multilingual_v2",
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 },
     });
     const req = https.request({
-      hostname: "api.anthropic.com", path: "/v1/messages", method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Length": Buffer.byteLength(body) },
-      timeout: 8000,
+      hostname: "api.elevenlabs.io",
+      path: `/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
+      method: "POST",
+      headers: {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+      timeout: 20000,
+    }, (res) => {
+      if (res.statusCode !== 200) {
+        const chunks = [];
+        res.on("data", c => chunks.push(c));
+        res.on("end", () => reject(new Error("ElevenLabs: " + Buffer.concat(chunks).toString())));
+        return;
+      }
+      const mp3Path = path.join(os.tmpdir(), "speaknote_tts.mp3");
+      const out = fs.createWriteStream(mp3Path);
+      res.pipe(out);
+      out.on("finish", () => resolve(mp3Path));
+      out.on("error", reject);
+    });
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("TTS timeout")); });
+    req.write(body); req.end();
+  });
+}
+
+// --- AI text cleanup (via Vercel API) ---
+function cleanWithAI(rawText) {
+  return new Promise((resolve) => {
+    if (!rawText.trim()) { resolve(rawText); return; }
+    const body = JSON.stringify({ text: rawText });
+    const req = https.request({
+      hostname: new URL(VERCEL_API).hostname,
+      path: "/api/clean",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+      timeout: 15000,
     }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => { chunks.push(chunk); });
       res.on("end", () => {
         try {
-          const data = Buffer.concat(chunks).toString("utf-8");
-          resolve(JSON.parse(data).content?.[0]?.text?.trim() || rawText);
+          const data = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+          resolve(data.cleaned || rawText);
         } catch { resolve(rawText); }
       });
     });
     req.on("error", () => resolve(rawText));
     req.on("timeout", () => { req.destroy(); resolve(rawText); });
+    req.write(body); req.end();
+  });
+}
+
+// --- AI chat (via Vercel API) ---
+function chatWithAI(userText) {
+  return new Promise((resolve, reject) => {
+    if (!userText.trim()) { reject(new Error("空テキスト")); return; }
+    chatHistory.push({ role: "user", content: userText });
+    // Trim history
+    while (chatHistory.length > MAX_CHAT_TURNS * 2) chatHistory.shift();
+    while (chatHistory.length > 0 && chatHistory[0].role === "assistant") chatHistory.shift();
+
+    const body = JSON.stringify({
+      message: userText,
+      history: chatHistory.slice(0, -1), // exclude current message (already in API)
+    });
+    const req = https.request({
+      hostname: new URL(VERCEL_API).hostname,
+      path: "/api/chat",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+      timeout: 30000,
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        try {
+          const data = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+          const reply = (data.reply || data.content?.[0]?.text || "").trim();
+          if (reply) { chatHistory.push({ role: "assistant", content: reply }); resolve(reply); }
+          else { reject(new Error("空の応答")); }
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("タイムアウト")); });
     req.write(body); req.end();
   });
 }
@@ -141,18 +195,14 @@ function pasteText(text) {
     console.log("[SpeakNote] フォーカス復元: hwnd=", savedHwnd);
     // Try 3 times to ensure focus is restored
     SetForegroundWindow(savedHwnd);
-    setTimeout(() => SetForegroundWindow(savedHwnd), 100);
-    setTimeout(() => SetForegroundWindow(savedHwnd), 250);
+    setTimeout(() => SetForegroundWindow(savedHwnd), 80);
   }
 
   // Wait for focus restoration, then paste (keyhelper handles Alt-up + Ctrl+V)
   setTimeout(() => {
-    // Verify focus before paste
-    if (savedHwnd && SetForegroundWindow) {
-      SetForegroundWindow(savedHwnd);
-    }
+    if (savedHwnd && SetForegroundWindow) SetForegroundWindow(savedHwnd);
     setTimeout(() => {
-      execFile(keyhelper, ["paste"], (err) => {
+      execFile(keyhelper, ["paste"], { timeout: 3000 }, (err) => {
         if (err) console.error("[SpeakNote] Paste error:", err.message);
         else {
           console.log("[SpeakNote] 貼り付け完了");
@@ -161,13 +211,14 @@ function pasteText(text) {
           }
         }
       });
-    }, 150);
-  }, 400);
+    }, 100);
+  }, 200);
 }
 
-// --- System beep via PowerShell (works even when Edge is background) ---
+// --- System beep (PowerShell singleton for speed) ---
+let beepProcess = null;
 function playBeep(freq, duration) {
-  exec(`powershell -c "[console]::beep(${freq},${duration})"`, { windowsHide: true });
+  exec(`powershell -NoProfile -c "[console]::beep(${freq},${duration})"`, { windowsHide: true, timeout: 3000 });
 }
 function playStartBeep() { playBeep(1000, 80); }
 function playStopBeep() { playBeep(800, 80); }
@@ -191,6 +242,14 @@ const httpServer = http.createServer((req, res) => {
   if (req.url === "/" || req.url === "/speech.html") {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(fs.readFileSync(speechHtmlPath, "utf-8"));
+  } else if (req.url === "/tts.mp3") {
+    const mp3Path = path.join(os.tmpdir(), "speaknote_tts.mp3");
+    if (fs.existsSync(mp3Path)) {
+      res.writeHead(200, { "Content-Type": "audio/mpeg", "Content-Length": fs.statSync(mp3Path).size });
+      fs.createReadStream(mp3Path).pipe(res);
+    } else {
+      res.writeHead(404); res.end();
+    }
   } else {
     res.writeHead(404); res.end();
   }
@@ -201,6 +260,10 @@ const wss = new WebSocket.Server({ server: httpServer });
 wss.on("connection", (ws) => {
   console.log("[SpeakNote] Edge WebSocket接続!");
   speechWs = ws;
+  // Sync chatMode state to newly connected Edge
+  if (chatMode) {
+    ws.send(JSON.stringify({ type: "command", command: "chat_mode_on" }));
+  }
 
   ws.on("message", async (data) => {
     try {
@@ -223,6 +286,38 @@ wss.on("connection", (ws) => {
         // Send both raw and final text back for diff detection
         ws.send(JSON.stringify({ type: "pasted", raw: rawText, text: finalText }));
         ws.send(JSON.stringify({ type: "command", command: "done" }));
+      } else if (msg.type === "chat_input" && msg.text) {
+        console.log("[SpeakNote] 会話入力:", msg.text);
+        try {
+          const reply = await chatWithAI(msg.text);
+          console.log("[SpeakNote] 会話応答:", reply);
+          // Generate & play ElevenLabs TTS
+          let useElevenLabs = false;
+          if (ELEVENLABS_API_KEY) {
+            try {
+              const mp3Path = await elevenLabsTTS(reply);
+              console.log("[SpeakNote] ElevenLabs TTS生成完了");
+              // Play directly via PowerShell (bypasses Edge autoplay policy)
+              const psCmd = `powershell -c "Add-Type -AssemblyName PresentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([uri]'${mp3Path.replace(/\\/g, '/')}'); Start-Sleep -Seconds 1; $p.Play(); while($p.Position -lt $p.NaturalDuration.TimeSpan){ Start-Sleep -Milliseconds 200 }; $p.Close()"`;
+              exec(psCmd, { windowsHide: true, timeout: 30000 }, (err) => {
+                if (err) console.error("[SpeakNote] TTS再生エラー:", err.message);
+                else console.log("[SpeakNote] TTS再生完了");
+                ws.send(JSON.stringify({ type: "command", command: "tts_done" }));
+              });
+              useElevenLabs = true;
+            } catch (e) {
+              console.error("[SpeakNote] ElevenLabs TTS失敗:", e.message, "→ブラウザTTSにフォールバック");
+            }
+          }
+          ws.send(JSON.stringify({ type: "chat_reply", text: reply, useElevenLabs }));
+        } catch (err) {
+          console.error("[SpeakNote] 会話APIエラー:", err.message);
+          ws.send(JSON.stringify({ type: "chat_error", error: err.message }));
+        }
+      } else if (msg.type === "chat_clear") {
+        chatHistory = [];
+        console.log("[SpeakNote] 会話履歴クリア");
+        ws.send(JSON.stringify({ type: "chat_cleared" }));
       } else if (msg.type === "keep_save" && msg.text) {
         // Copy text to clipboard and open Google Keep via default browser (not msedge directly to avoid killing SpeakNote's Edge)
         const keepUrl = `https://keep.google.com/#NOTE`;
@@ -236,6 +331,11 @@ wss.on("connection", (ws) => {
         if (msg.key === "aiEnabled") {
           aiEnabled = msg.value;
           console.log("[SpeakNote] AI整形:", aiEnabled ? "ON" : "OFF");
+        } else if (msg.key === "chatMode") {
+          chatMode = msg.value;
+          console.log("[SpeakNote] モード:", chatMode ? "会話" : "整形");
+          // Confirm back to Edge
+          ws.send(JSON.stringify({ type: "command", command: chatMode ? "chat_mode_on" : "chat_mode_off" }));
         } else if (msg.key === "autoLearnEnabled") {
           autoLearnEnabled = msg.value;
           console.log("[SpeakNote] 自動学習:", autoLearnEnabled ? "ON" : "OFF");
@@ -298,7 +398,7 @@ function launchEdge() {
 // --- Tray ---
 function createTray() {
   tray = new Tray(path.join(__dirname, "icon.ico"));
-  tray.setToolTip("SpeakNote - Alt=録音 / F9=トグル / F10=Keep / F11=AI切替");
+  tray.setToolTip("SpeakNote - Alt=録音 / F8=会話 / F9=トグル / F10=Keep / F11=AI切替");
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "Edge表示", click: launchEdge },
     { type: "separator" },
@@ -317,7 +417,7 @@ app.whenReady().then(() => {
   };
   waitAndLaunch();
 
-  console.log("[SpeakNote] AI整形:", ANTHROPIC_API_KEY ? "有効" : "無効");
+  console.log("[SpeakNote] AI整形: Vercel API経由 (" + VERCEL_API + ")");
 
   // F9 toggle recording (debounced)
   let lastF9 = 0;
@@ -366,6 +466,21 @@ app.whenReady().then(() => {
     });
   });
 
+  // F8 = Toggle chat mode (debounced)
+  let lastF8 = 0;
+  globalShortcut.register("F8", () => {
+    if (Date.now() - lastF8 < 1000) return; // 1秒デバウンス
+    lastF8 = Date.now();
+    chatMode = !chatMode;
+    if (chatMode) {
+      playBeep(800, 80); setTimeout(() => playBeep(1200, 80), 100);
+    } else {
+      playBeep(1200, 80); setTimeout(() => playBeep(800, 80), 100);
+    }
+    sendCommand(chatMode ? "chat_mode_on" : "chat_mode_off");
+    console.log("[SpeakNote] モード:", chatMode ? "会話" : "整形");
+  });
+
   // F11 = Toggle AI cleanup
   globalShortcut.register("F11", () => {
     aiEnabled = !aiEnabled;
@@ -400,13 +515,13 @@ app.whenReady().then(() => {
       } else if (!isDown && altWasDown) {
         altWasDown = false;
         playStopBeep();
-        // Wait 1.5s after Alt release for speech recognition to finalize
+        // Wait 600ms after Alt release for speech recognition to finalize
         stopTimer = setTimeout(() => {
           sendCommand("stop");
           stopTimer = null;
-        }, 1500);
+        }, 600);
       }
-    }, 30);
+    }, 80);
 
     console.log("[SpeakNote] 起動完了 - Alt押す=録音 / F9=トグル / ボタン");
   } catch (err) {

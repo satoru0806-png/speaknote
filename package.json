@@ -2,22 +2,56 @@
   "name": "speaknote",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "electron": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.speaknote.app",
+    "productName": "SpeakNote",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "node_modules/ws/**/*",
+      "node_modules/koffi/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "electron/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "installerIcon": "electron/icon.ico",
+      "uninstallerIcon": "electron/icon.ico",
+      "shortcutName": "SpeakNote"
+    }
   },
   "dependencies": {
+    "koffi": "^2.15.1",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "uiohook-napi": "^1.5.4",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "electron": "^40.8.0",
+    "electron-builder": "^26.8.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",

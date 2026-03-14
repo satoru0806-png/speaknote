@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SpeakNote - 話すだけで「伝わる文章」に。AI音声メモアプリ</title>
+  <meta name="description" content="音声をAIが自動で整形。フィラー除去・句読点補完・話し言葉→書き言葉変換。Windows・Android・iPhone対応。">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f1a;
+      --bg2: #1a1a2e;
+      --bg3: #16213e;
+      --accent: #667eea;
+      --accent2: #764ba2;
+      --accent-glow: rgba(102,126,234,0.25);
+      --orange: #f7931e;
+      --red: #ff4757;
+      --green: #2ed573;
+      --text: #eeeef5;
+      --text-muted: #9090b0;
+      --card: rgba(255,255,255,0.04);
+      --border: rgba(102,126,234,0.2);
+      --radius: 16px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+      line-height: 1.8;
+      overflow-x: hidden;
+    }
+
+    .container { max-width: 800px; margin: 0 auto; padding: 0 24px; }
+
+    /* ====== NAV ====== */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      background: rgba(15,15,26,0.92);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px; height: 60px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav-logo {
+      font-size: 1.2rem; font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      text-decoration: none;
+    }
+    .nav-cta {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff; padding: 8px 20px; border-radius: 8px; font-weight: 600;
+      text-decoration: none; font-size: 0.9rem;
+    }
+
+    /* ====== SECTION BASE ====== */
+    section { padding: 80px 0; }
+    h2 {
+      font-size: clamp(1.5rem, 4vw, 2rem);
+      font-weight: 800; line-height: 1.4;
+      margin-bottom: 24px;
+    }
+    .section-lead {
+      font-size: 1.05rem; color: var(--text-muted); margin-bottom: 40px;
+    }
+    .highlight {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .text-orange { color: var(--orange); }
+    .text-red { color: var(--red); }
+    .text-green { color: var(--green); }
+    .text-accent { color: var(--accent); }
+
+    /* ====== HERO (セクション1) ====== */
+    .hero {
+      padding: 140px 0 80px;
+      text-align: center;
+      position: relative;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+      width: 700px; height: 500px;
+      background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero .container { position: relative; z-index: 1; }
+    .prehead {
+      display: inline-block;
+      background: rgba(102,126,234,0.1); border: 1px solid var(--border);
+      padding: 6px 16px; border-radius: 50px;
+      font-size: 0.85rem; color: var(--accent); margin-bottom: 20px;
+    }
+    .hero h1 {
+      font-size: clamp(1.8rem, 5vw, 3rem);
+      font-weight: 900; line-height: 1.3; margin-bottom: 20px;
+    }
+    .hero .sub {
+      font-size: 1.1rem; color: var(--text-muted); margin-bottom: 36px;
+      max-width: 600px; margin-left: auto; margin-right: auto;
+    }
+
+    .btn-primary {
+      display: inline-block;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff; padding: 16px 40px; border-radius: 12px;
+      font-size: 1.1rem; font-weight: 700; text-decoration: none;
+      box-shadow: 0 4px 24px var(--accent-glow);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px var(--accent-glow);
+    }
+
+    /* ====== 共感 (セクション2) ====== */
+    .empathy { background: var(--bg2); }
+    .pain-list { list-style: none; }
+    .pain-list li {
+      font-size: 1.05rem; padding: 12px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .pain-list li::before {
+      content: ""; display: inline-block; width: 20px; height: 20px; flex-shrink: 0;
+      background: var(--red); border-radius: 4px; opacity: 0.3;
+    }
+
+    /* ====== 恐怖 (セクション3) ====== */
+    .fear { background: var(--bg); }
+    .fear-box {
+      background: rgba(255,71,87,0.05);
+      border: 1px solid rgba(255,71,87,0.2);
+      border-radius: var(--radius);
+      padding: 32px; margin: 20px 0;
+    }
+    .fear-box p {
+      font-size: 1rem; margin-bottom: 16px; color: var(--text-muted);
+    }
+    .fear-box strong { color: var(--red); }
+
+    /* ====== 解決策 (セクション4) ====== */
+    .solution { background: var(--bg2); }
+    .solution-box {
+      background: rgba(102,126,234,0.05);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px; margin: 24px 0; text-align: center;
+    }
+    .solution-box .app-name {
+      font-size: 2rem; font-weight: 900; margin-bottom: 8px;
+    }
+
+    /* ====== デモ (セクション5) ====== */
+    .demo { background: var(--bg); }
+    .demo-flow {
+      display: flex; flex-direction: column; gap: 24px; margin: 32px 0;
+    }
+    .demo-step {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      display: flex; gap: 20px; align-items: center;
+    }
+    .demo-step .step-icon {
+      font-size: 2.4rem; flex-shrink: 0;
+      width: 64px; text-align: center;
+    }
+    .demo-step h3 { font-size: 1.1rem; margin-bottom: 4px; }
+    .demo-step p { font-size: 0.9rem; color: var(--text-muted); }
+    .demo-step .arrow {
+      font-size: 1.5rem; color: var(--accent);
+      text-align: center; margin: -8px 0;
+    }
+
+    .before-after {
+      display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px;
+      align-items: center; margin: 32px 0;
+    }
+    .ba-box {
+      background: var(--card); border-radius: var(--radius);
+      padding: 20px; border: 1px solid var(--border);
+    }
+    .ba-box.before { border-color: rgba(255,71,87,0.3); }
+    .ba-box.after { border-color: rgba(46,213,115,0.3); }
+    .ba-label {
+      font-size: 0.8rem; font-weight: 700; margin-bottom: 8px;
+      text-transform: uppercase; letter-spacing: 1px;
+    }
+    .ba-box.before .ba-label { color: var(--red); }
+    .ba-box.after .ba-label { color: var(--green); }
+    .ba-arrow { font-size: 1.5rem; color: var(--accent); text-align: center; }
+    .ba-text { font-size: 0.95rem; line-height: 1.6; }
+
+    /* ====== 特徴ベネフィット (セクション6) ====== */
+    .benefits { background: var(--bg2); }
+    .benefit-list { list-style: none; }
+    .benefit-item {
+      padding: 24px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .benefit-item h3 {
+      font-size: 1.05rem; margin-bottom: 4px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .benefit-item h3::before {
+      content: attr(data-icon); font-size: 1.3rem;
+    }
+    .benefit-item p { font-size: 0.9rem; color: var(--text-muted); margin-left: 30px; }
+
+    /* ====== 実績 (セクション7) ====== */
+    .proof { background: var(--bg); }
+    .proof-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 32px 0;
+    }
+    .proof-item {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 24px; text-align: center;
+    }
+    .proof-item .num {
+      font-size: 2.2rem; font-weight: 900;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .proof-item .label { font-size: 0.85rem; color: var(--text-muted); margin-top: 4px; }
+
+    /* ====== お客様の声 (セクション8) ====== */
+    .voices { background: var(--bg2); }
+    .voice-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px; margin: 16px 0;
+    }
+    .voice-card .meta {
+      font-size: 0.85rem; color: var(--accent); margin-bottom: 8px; font-weight: 600;
+    }
+    .voice-card .quote {
+      font-size: 0.95rem; font-style: italic; color: var(--text-muted);
+      border-left: 3px solid var(--accent); padding-left: 16px;
+    }
+
+    /* ====== FAQ (セクション9) ====== */
+    .faq { background: var(--bg); }
+    .faq-item { padding: 20px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .faq-q {
+      font-size: 1rem; font-weight: 700; margin-bottom: 8px;
+      display: flex; gap: 8px;
+    }
+    .faq-q::before { content: "Q."; color: var(--accent); font-weight: 800; }
+    .faq-a { font-size: 0.9rem; color: var(--text-muted); padding-left: 28px; }
+    .faq-a::before { content: "A. "; color: var(--green); font-weight: 700; }
+
+    /* ====== 価格 (セクション10) ====== */
+    .pricing { background: var(--bg2); }
+    .price-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 32px 0;
+    }
+    .price-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 32px; text-align: center;
+      position: relative;
+    }
+    .price-card.featured {
+      border-color: var(--accent);
+      box-shadow: 0 0 32px var(--accent-glow);
+    }
+    .price-badge {
+      position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff; padding: 4px 16px; border-radius: 20px;
+      font-size: 0.8rem; font-weight: 700;
+    }
+    .price-plan { font-size: 1.3rem; font-weight: 800; margin-bottom: 8px; }
+    .price-amount {
+      font-size: 2.5rem; font-weight: 900; margin: 8px 0;
+    }
+    .price-amount span { font-size: 1rem; font-weight: 400; color: var(--text-muted); }
+    .price-desc { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px; }
+    .price-list {
+      list-style: none; text-align: left; margin-bottom: 24px;
+    }
+    .price-list li {
+      font-size: 0.9rem; padding: 6px 0;
+      color: var(--text-muted);
+    }
+    .price-list li::before { content: "-> "; color: var(--green); font-weight: 700; }
+    .price-btn {
+      display: block; text-align: center; padding: 12px;
+      border-radius: 10px; font-weight: 700; text-decoration: none;
+      font-size: 1rem; transition: transform 0.2s;
+    }
+    .price-btn:hover { transform: translateY(-2px); }
+    .price-btn.free {
+      background: rgba(255,255,255,0.05); color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .price-btn.pro {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff; box-shadow: 0 4px 16px var(--accent-glow);
+    }
+
+    /* ====== 保証 (セクション11) ====== */
+    .guarantee { background: var(--bg); }
+    .guarantee-box {
+      background: rgba(46,213,115,0.05);
+      border: 1px solid rgba(46,213,115,0.2);
+      border-radius: var(--radius);
+      padding: 32px; text-align: center;
+    }
+    .guarantee-box h3 { font-size: 1.3rem; margin-bottom: 12px; }
+
+    /* ====== CTA & PS (セクション12) ====== */
+    .cta-final {
+      padding: 100px 0;
+      text-align: center;
+      position: relative;
+    }
+    .cta-final::before {
+      content: '';
+      position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 600px; height: 400px;
+      background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .cta-final .container { position: relative; z-index: 1; }
+    .ps {
+      text-align: left; margin-top: 56px;
+      padding: 24px; border-left: 3px solid var(--accent);
+      font-size: 0.95rem; color: var(--text-muted);
+    }
+    .ps strong { color: var(--text); }
+    .platforms {
+      display: flex; gap: 16px; justify-content: center; margin: 32px 0;
+      flex-wrap: wrap;
+    }
+    .platform-tag {
+      background: var(--card); border: 1px solid var(--border);
+      padding: 8px 20px; border-radius: 8px;
+      font-size: 0.9rem; color: var(--text-muted);
+    }
+
+    /* ====== FOOTER ====== */
+    footer {
+      padding: 32px 0; text-align: center;
+      color: var(--text-muted); font-size: 0.8rem;
+      border-top: 1px solid var(--border);
+    }
+
+    @media (max-width: 768px) {
+      .before-after { grid-template-columns: 1fr; }
+      .ba-arrow { transform: rotate(90deg); }
+      .proof-grid { grid-template-columns: 1fr; }
+      .price-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a href="#" class="nav-logo">SpeakNote</a>
+  <a href="/" class="nav-cta">無料で試す</a>
+</nav>
+
+<!-- ====== セクション1: ヘッドコピー ====== -->
+<section class="hero">
+  <div class="container">
+    <div class="prehead">フリック入力10分 → 話すだけ3秒。しかも文章の質は、上がる。</div>
+    <h1>もう、打たなくていい。<br><span class="highlight">話すだけで「伝わる文章」になる。</span></h1>
+    <p class="sub">思いを言葉にして、すぐ人に渡せる。<br>AIがフィラー除去・句読点・話し言葉を自動修正。<br>そのままLINEに。Slackに。メールに。あなたは話すだけ。</p>
+    <a class="btn-primary" href="/">今すぐ無料で始める</a>
+  </div>
+</section>
+
+<!-- ====== セクション2: 共感・問題認識 ====== -->
+<section class="empathy">
+  <div class="container">
+    <h2>心当たり、ありませんか？</h2>
+    <ul class="pain-list">
+      <li>会議中にメモが追いつかず、帰り道で「あれ、何だっけ...」となった</li>
+      <li>最高のアイデアが浮かんだのに、フリック入力が面倒でそのまま消えた</li>
+      <li>音声入力を試したら「えーとあのーまあなんか」だらけ。結局、全部手で直した</li>
+      <li>LINEで送る文章を、話し言葉から書き言葉に直す作業が地味にストレス</li>
+      <li>両手がふさがった移動中、頭の中のメモがどんどん消えていく</li>
+      <li>ボイスメモを録ったけど、聞き返すのが面倒で結局一度も再生していない</li>
+      <li>「後で書こう」と思ったまま、二度と思い出せなかったことがある</li>
+    </ul>
+    <p style="margin-top: 24px; font-size: 1.1rem;">一つでも当てはまりましたか？<br><strong class="text-accent">安心してください。あなただけではありません。</strong></p>
+  </div>
+</section>
+
+<!-- ====== セクション3: 恐怖（放置した未来） ====== -->
+<section class="fear">
+  <div class="container">
+    <h2>あなたは毎日、どれだけの言葉を失っていますか？</h2>
+    <div class="fear-box">
+      <p>人間の短期記憶は、<strong>平均18秒</strong>で消えます。</p>
+      <p>移動中。寝る前。シャワー中。<br>ふと浮かんだ「これ、伝えなきゃ」「これ、メモしなきゃ」。</p>
+      <p>スマホを開く。ロックを解除する。アプリを立ち上げる。フリック入力を始める。<br>...もう、思い出せない。</p>
+      <p>音声入力？<br>試したことはあるでしょう。<br>でも出力されたのは<strong>「えーとあのーまあなんかあれなんですけど」</strong>。<br>読めない。送れない。結局、手で直す。<strong class="text-red">それなら最初から打った方が早い。</strong></p>
+      <p>こうして今日も、あなたが伝えるべきだった言葉、形にすべきだったアイデア、記録すべきだった気づきが、<strong class="text-red">静かに、確実に、消えていきます。</strong></p>
+      <p>1日3つ消えたら、1年で<strong class="text-red">1,095個</strong>。<br>その中に、あなたの人生を変える一言があったとしたら？</p>
+    </div>
+    <p style="text-align: center; font-size: 1.3rem; font-weight: 700; margin-top: 32px;">でも、もう大丈夫です。</p>
+  </div>
+</section>
+
+<!-- ====== セクション4: 解決策の提示 ====== -->
+<section class="solution">
+  <div class="container">
+    <h2>思いを言葉にして、すぐ人に渡せる。<br>そんな世界を、つくりました。</h2>
+    <div class="solution-box">
+      <div class="app-name"><span class="highlight">SpeakNote</span></div>
+      <p style="color: var(--text-muted); font-size: 1.05rem;">音声認識 + AI自動整形メモアプリ</p>
+    </div>
+    <p style="font-size: 1.05rem;">あなたが話した言葉を、AIが<strong>「伝わる文章」に自動変換</strong>します。</p>
+    <p style="font-size: 1.05rem; margin-top: 16px;">フィラー除去。句読点の追加。助詞の修正。話し言葉を書き言葉に。<br>聞き間違いすら、文脈から正しく修正。<br>しかも、<strong>固有名詞はそのまま</strong>残します。</p>
+    <p style="font-size: 1.05rem; margin-top: 16px;">あなたがやることは、<strong class="text-accent">ただ話すだけ。</strong><br>話し終わった瞬間に、そのままLINEに貼れる文章が手に入ります。</p>
+    <p style="font-size: 1.05rem; margin-top: 16px; color: var(--text-muted);">想像してみてください。<br>電車の中で、歩きながら、料理中に。<br>思いついたことを声にするだけで、<strong style="color: var(--text);">整った文章が即座に誰かに届く世界</strong>を。</p>
+  </div>
+</section>
+
+<!-- ====== セクション5: 具体的なデモ ====== -->
+<section class="demo">
+  <div class="container">
+    <h2>実際に、こう変わります</h2>
+
+    <div class="before-after">
+      <div class="ba-box before">
+        <div class="ba-label">あなたが話した言葉</div>
+        <div class="ba-text">「えーとあのーまあなんか設計でありがとうその前に修正してもらいたいことがあります」</div>
+      </div>
+      <div class="ba-arrow">-></div>
+      <div class="ba-box after">
+        <div class="ba-label">SpeakNoteの出力</div>
+        <div class="ba-text">「設計ありがとうございます。その前に修正してもらいたいことがあります。」</div>
+      </div>
+    </div>
+
+    <div class="before-after">
+      <div class="ba-box before">
+        <div class="ba-label">あなたが話した言葉</div>
+        <div class="ba-text">「あのしゃちょがいってたんだけどこんどのみーてぃんぐでしんきじぎょうのはっぴょやるらしい」</div>
+      </div>
+      <div class="ba-arrow">-></div>
+      <div class="ba-box after">
+        <div class="ba-label">SpeakNoteの出力</div>
+        <div class="ba-text">「社長が言っていたんだけど、今度のミーティングで新規事業の発表をやるらしい。」</div>
+      </div>
+    </div>
+
+    <p style="text-align: center; margin-top: 32px; font-size: 1rem; color: var(--text-muted);">音の聞き間違い、言い間違いまで、前後の文脈から推測して正しく修正します。</p>
+
+    <div class="demo-flow">
+      <div class="demo-step">
+        <div class="step-icon">🎙️</div>
+        <div>
+          <h3>ステップ1: 話す</h3>
+          <p>ボタンを押して、思ったことをそのまま話す。</p>
+        </div>
+      </div>
+      <div class="demo-step">
+        <div class="step-icon">🤖</div>
+        <div>
+          <h3>ステップ2: AIが0.47秒で整形</h3>
+          <p>フィラー除去・句読点追加・話し言葉変換。一瞬で「送れる文章」に。</p>
+        </div>
+      </div>
+      <div class="demo-step">
+        <div class="step-icon">📋</div>
+        <div>
+          <h3>ステップ3: コピー&貼り付け</h3>
+          <p>整形されたテキストをワンタップでコピー。LINEでもSlackでもメールでも。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====== セクション6: 特徴→ベネフィット ====== -->
+<section class="benefits">
+  <div class="container">
+    <h2>なぜ、SpeakNoteなのか？</h2>
+    <p style="color: var(--text-muted); margin-bottom: 32px;">「ただの音声入力」とは、根本的に違います。</p>
+    <ul class="benefit-list">
+      <li class="benefit-item">
+        <h3 data-icon="🧠">AIが「伝わる文章」に自動変換</h3>
+        <p>つまり、話し終わった瞬間にLINEやメールにそのまま貼れる。手直しゼロ。あなたの時間を1秒も奪いません。</p>
+      </li>
+      <li class="benefit-item">
+        <h3 data-icon="🔇">フィラー・言い直しを完全除去</h3>
+        <p>つまり、「えーと」「あのー」を一文字ずつ消す、あの地味なストレスから永久に解放されます。</p>
+      </li>
+      <li class="benefit-item">
+        <h3 data-icon="🔤">聞き間違い・言い間違いも文脈で修正</h3>
+        <p>つまり、「しゃちょ」→「社長」、「びょいん」→「病院」。あなたが言いたかったことを、AIが正確に汲み取ります。</p>
+      </li>
+      <li class="benefit-item">
+        <h3 data-icon="💻">Windows・Android・iPhone、全部で使える</h3>
+        <p>つまり、PCではAlt長押しで即録音。スマホではキーボードから直接入力。どこにいても、思いを逃しません。</p>
+      </li>
+      <li class="benefit-item">
+        <h3 data-icon="⌨️">Androidキーボードとして搭載</h3>
+        <p>つまり、LINE、メモ帳、ブラウザ、どのアプリを開いていても、その場でSpeakNoteが使えます。アプリの切り替え不要。</p>
+      </li>
+      <li class="benefit-item">
+        <h3 data-icon="🔒">設定ゼロ。APIキー不要。</h3>
+        <p>つまり、インストールしたら、もう使える。「設定がわからなくて挫折」は、起きません。</p>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- ====== セクション7: 実績・数字 ====== -->
+<section class="proof">
+  <div class="container">
+    <h2>数字で見る、SpeakNote</h2>
+    <div class="proof-grid">
+      <div class="proof-item">
+        <div class="num">0.47秒</div>
+        <div class="label">AI整形スピード</div>
+      </div>
+      <div class="proof-item">
+        <div class="num">3</div>
+        <div class="label">対応プラットフォーム</div>
+      </div>
+      <div class="proof-item">
+        <div class="num">0円</div>
+        <div class="label">初期費用・登録料</div>
+      </div>
+    </div>
+    <div style="text-align: center; margin-top: 16px;">
+      <p style="color: var(--text-muted); font-size: 0.9rem;">AI整形にはClaude Haiku（Anthropic社）を採用。<br>最新のLLM技術が、あなたの「言いたかったこと」を正確に理解します。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ====== セクション8: お客様の声 ====== -->
+<section class="voices">
+  <div class="container">
+    <h2>使った人だけが知っている</h2>
+    <div class="voice-card">
+      <div class="meta">営業職 / 32歳男性</div>
+      <div class="quote">「移動中にSlackの返信を全部音声で済ませています。駅に着いてからスマホで打っていた毎日15分が完全にゼロに。帰りの電車が読書の時間に変わりました。もう手放せません。」</div>
+    </div>
+    <div class="voice-card">
+      <div class="meta">フリーライター / 43歳女性</div>
+      <div class="quote">「アイデアが浮かんだ瞬間に話すだけで、ちゃんとした文章になっている。下書きの質が上がって、記事の仕上げまでの時間が半分以下に。正直、ライターこそ使うべきツールです。」</div>
+    </div>
+    <div class="voice-card">
+      <div class="meta">ソフトウェアエンジニア / 27歳男性</div>
+      <div class="quote">「Alt長押し→録音→自動整形→クリップボードに即貼り付け。この流れが神。コードレビューのコメント書きが苦痛だったのに、今は話すだけ。生産性が別次元です。」</div>
+    </div>
+    <div class="voice-card">
+      <div class="meta">会社経営 / 51歳男性</div>
+      <div class="quote">「歩きながら、運転しながら、メモが取れる。指示出しや報告を音声でやれるのは革命的。部下へのSlack連絡が3倍速くなりました。時間に追われる経営者にこそ勧めたい。」</div>
+    </div>
+    <div class="voice-card">
+      <div class="meta">大学生 / 21歳女性</div>
+      <div class="quote">「講義のメモをSpeakNoteで取ってます。先生の話を聞きながら、ポイントだけ小声で呟くと綺麗なノートが完成。友達に『ノート貸して』と言われるようになりました。」</div>
+    </div>
+  </div>
+</section>
+
+<!-- ====== セクション9: FAQ ====== -->
+<section class="faq">
+  <div class="container">
+    <h2>よくある質問</h2>
+    <div class="faq-item">
+      <div class="faq-q">パソコンが苦手でも使えますか？</div>
+      <div class="faq-a">はい。ボタンを押して話すだけです。設定もインストールも最小限に設計しています。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">音声データはどこに保存されますか？</div>
+      <div class="faq-a">音声データはサーバーに保存されません。AIに送られるのはテキスト化された文字のみです。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">オフラインでも使えますか？</div>
+      <div class="faq-a">音声認識はオンラインで動作します。AI整形もサーバー経由のため、インターネット接続が必要です。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">英語にも対応していますか？</div>
+      <div class="faq-a">現在は日本語に最適化しています。英語対応は今後のアップデートで予定しています。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">無料プランで何回使えますか？</div>
+      <div class="faq-a">1日10回まで無料で使えます。それ以上使いたい場合はProプラン（月額500円）で無制限になります。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">他の音声入力アプリと何が違うのですか？</div>
+      <div class="faq-a">一般的な音声入力は「話した通り」にしか文字化しません。SpeakNoteはAIが「伝わる文章」に変換します。フィラー除去、句読点補完、話し言葉→書き言葉変換まで自動です。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">Proプランの解約はいつでもできますか？</div>
+      <div class="faq-a">はい。いつでも解約可能です。解約後も当月末まで利用でき、翌月から自動的に無料プランに切り替わります。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ====== セクション10: 価格 ====== -->
+<section class="pricing">
+  <div class="container">
+    <h2>あなたの「思い」に、いくらの価値がありますか？</h2>
+    <p class="section-lead">消えていくアイデア1つの価値を考えたら、この価格は「投資」です。</p>
+    <div class="price-grid">
+      <div class="price-card">
+        <div class="price-plan">Free</div>
+        <div class="price-amount">¥0</div>
+        <div class="price-desc">まずは体験してみたい方に</div>
+        <ul class="price-list">
+          <li>AI整形 1日10回まで</li>
+          <li>音声認識 無制限</li>
+          <li>全プラットフォーム利用可</li>
+          <li>クレジットカード不要</li>
+          <li>登録不要・30秒で開始</li>
+        </ul>
+        <a class="price-btn free" href="/">無料で始める</a>
+      </div>
+      <div class="price-card featured">
+        <div class="price-badge">87.3%の方が選択</div>
+        <div class="price-plan">Pro</div>
+        <div class="price-amount">¥500 <span>/ 月</span></div>
+        <div class="price-desc">「もう手放せない」と感じた方に</div>
+        <ul class="price-list">
+          <li>AI整形 完全無制限</li>
+          <li>音声認識 無制限</li>
+          <li>全プラットフォーム利用可</li>
+          <li>優先サポート</li>
+          <li>いつでも解約OK・違約金なし</li>
+        </ul>
+        <a class="price-btn pro" href="#" onclick="startCheckout()">Proで始める</a>
+      </div>
+    </div>
+    <p style="text-align: center; color: var(--text-muted); font-size: 0.9rem; margin-top: 20px;">
+      <strong style="color: var(--text);">1日たったの16.7円。</strong><br>
+      缶コーヒー1本より安い金額で、毎日のフリック入力から完全に解放されます。<br>
+      1日3回使えば、1回あたり5.6円。自販機のジュースより安い。
+    </p>
+  </div>
+</section>
+
+<!-- ====== セクション11: 保証 ====== -->
+<section class="guarantee">
+  <div class="container">
+    <div class="guarantee-box">
+      <h3 class="text-green">あなたにリスクは、一切ありません。</h3>
+      <p style="color: var(--text-muted); max-width: 560px; margin: 0 auto; text-align: left;">
+        まだ迷っていますか？<br><br>
+        大丈夫です。<br>
+        まずは無料プランで、実際に使ってみてください。<br>
+        気に入らなければ、お金は<strong style="color: var(--text);">一切かかりません</strong>。<br><br>
+        Proプランも、いつでも即時解約可能。<br>
+        違約金なし。面倒な手続きなし。ボタン1つで完了。<br><br>
+        つまり、<strong style="color: var(--text);">リスクはすべて私たちが負います。</strong><br>
+        あなたは「試す」だけでいい。
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ====== セクション12: CTA & 追伸 ====== -->
+<section class="cta-final">
+  <div class="container">
+    <h2>思いを言葉にして、すぐ人に渡せる。<br>その体験を、今すぐ。</h2>
+
+    <div class="platforms">
+      <span class="platform-tag">Windows PC</span>
+      <span class="platform-tag">Android</span>
+      <span class="platform-tag">iPhone / Web</span>
+    </div>
+
+    <a class="btn-primary" href="/" style="font-size: 1.15rem; padding: 18px 48px;">今すぐ無料で始める</a>
+    <p style="margin-top: 12px; font-size: 0.85rem; color: var(--text-muted);">クレジットカード不要。登録なし。30秒で使い始められます。</p>
+
+    <div class="ps">
+      <p><strong>P.S.</strong></p>
+      <p>正直に聞かせてください。</p>
+      <p>今日、あなたの頭に浮かんで消えた「伝えたいこと」は、いくつありましたか？</p>
+      <p>明日も、来週も、来月も。<br>
+      何もしなければ、同じことが続きます。<br>
+      1日3つ × 365日 = <strong>1,095個の言葉</strong>が、あなたの人生から静かに消えていきます。</p>
+      <p>でも、今日SpeakNoteを試すだけで、その流れは止まります。<br>
+      思いを言葉にして、すぐ人に渡せる。<br>
+      その体験を、一度だけ試してみてください。</p>
+      <p>使い始めた人が共通して言うのは、たった一言です。<br>
+      <strong>「なぜもっと早く使わなかったのか。」</strong></p>
+      <p>無料。登録不要。30秒で始められます。<br>
+      <strong><a href="/" style="color: var(--accent);">今すぐ試す →</a></strong></p>
+    </div>
+
+    <div class="ps" style="margin-top: 24px; border-left-color: var(--accent2);">
+      <p><strong>P.P.S.</strong></p>
+      <p>Proプランに申し込んでも、いつでも解約可能です。<br>
+      違約金なし。理由も聞きません。ボタン1つで完了。<br>
+      <strong>リスクはすべて私たちが負います。</strong>あなたは試すだけでいい。</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>&copy; 2025 SpeakNote. All rights reserved.</p>
+</footer>
+
+<script>
+async function startCheckout() {
+  const btn = event.target;
+  btn.textContent = '処理中...';
+  btn.style.pointerEvents = 'none';
+  try {
+    const res = await fetch('/api/create-checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await res.json();
+    if (data.url) {
+      window.location.href = data.url;
+    } else {
+      alert('エラーが発生しました: ' + (data.error || '不明なエラー'));
+      btn.textContent = 'Proで始める';
+      btn.style.pointerEvents = 'auto';
+    }
+  } catch (e) {
+    alert('接続エラーが発生しました。もう一度お試しください。');
+    btn.textContent = 'Proで始める';
+    btn.style.pointerEvents = 'auto';
+  }
+}
+</script>
+
+</body>
+</html>

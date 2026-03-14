@@ -9,6 +9,9 @@ body { font-family:'Segoe UI',sans-serif; background:#1a1a2e; color:#fff; height
 #btn.idle:hover { transform:scale(1.05); box-shadow:0 0 20px rgba(102,126,234,0.5); }
 #btn.listening { background:#e74c3c; animation:pulse 1s infinite; box-shadow:0 0 30px rgba(231,76,60,0.6); }
 #btn.processing { background:#f39c12; cursor:wait; }
+#btn.idle.chat-mode { background:linear-gradient(135deg,#3498db,#2980b9); }
+#btn.idle.chat-mode:hover { box-shadow:0 0 20px rgba(52,152,219,0.5); }
+#btn.speaking { background:#2ecc71; animation:pulse 1.5s infinite; box-shadow:0 0 30px rgba(46,204,113,0.6); }
 #status { margin-top:12px; font-size:12px; color:#888; }
 #preview { margin-top:8px; font-size:11px; color:#aaa; max-width:280px; text-align:center; word-break:break-all; min-height:16px; }
 #conn { position:absolute; top:8px; right:8px; width:8px; height:8px; border-radius:50%; background:#e74c3c; }
@@ -46,6 +49,17 @@ body { font-family:'Segoe UI',sans-serif; background:#1a1a2e; color:#fff; height
 
 @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
 
+/* Mode toggle */
+#modeToggle { position:absolute; top:8px; left:8px; font-size:10px; padding:3px 8px; border-radius:10px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); color:#aaa; cursor:pointer; transition:all 0.2s; }
+#modeToggle.chat { background:rgba(52,152,219,0.3); color:#3498db; border-color:rgba(52,152,219,0.5); }
+
+/* Chat log */
+#chatLog { width:270px; max-height:140px; overflow-y:auto; margin-top:8px; font-size:11px; display:none; }
+#chatLog.show { display:block; }
+.chat-msg { padding:4px 8px; margin:2px 0; border-radius:8px; line-height:1.4; }
+.chat-msg.user { background:rgba(102,126,234,0.2); color:#b0c4ff; text-align:right; }
+.chat-msg.assistant { background:rgba(255,255,255,0.08); color:#ccc; }
+
 /* Dictionary modal */
 #dictModal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center; }
 #dictModal.show { display:flex; }
@@ -53,8 +67,9 @@ body { font-family:'Segoe UI',sans-serif; background:#1a1a2e; color:#fff; height
 </style>
 </head>
 <body>
+<div id="modeToggle" onclick="ensureAudioContexts(); toggleChatMode()">整形</div>
 <div id="conn"></div>
-<button id="btn" class="idle" onclick="toggleRecord()">
+<button id="btn" class="idle" onclick="ensureAudioContexts(); toggleRecord()">
   <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
     <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
@@ -63,6 +78,7 @@ body { font-family:'Segoe UI',sans-serif; background:#1a1a2e; color:#fff; height
 </button>
 <div id="status">接続中...</div>
 <div id="preview"></div>
+<div id="chatLog"></div>
 
 <!-- Settings -->
 <div id="settings">
@@ -79,11 +95,12 @@ body { font-family:'Segoe UI',sans-serif; background:#1a1a2e; color:#fff; height
 <div id="actions">
   <button onclick="saveToKeep()">Keep保存</button>
   <button onclick="openDict()">辞書</button>
+  <button id="btnClearChat" onclick="clearChat()" style="display:none;">会話クリア</button>
 </div>
 
 <div id="shortcuts">
-  <span>Alt</span>=録音 / <span>F9</span>=トグル / <span>F10</span>=Keep<br>
-  <span>F11</span>=AI切替 / <span>F12</span>=修正を辞書登録
+  <span>Alt</span>=録音 / <span>F8</span>=会話切替 / <span>F9</span>=トグル<br>
+  <span>F10</span>=Keep / <span>F11</span>=AI切替 / <span>F12</span>=辞書登録
 </div>
 
 <!-- Dictionary modal -->
@@ -119,6 +136,10 @@ let aiEnabled = true;
 let autoLearnEnabled = JSON.parse(localStorage.getItem('speaknote_autolearn') || 'false');
 let lastResult = '';
 let hintCount = parseInt(localStorage.getItem('speaknote_hint_count') || '0');
+let chatMode = false;
+const chatLogEl = document.getElementById('chatLog');
+const modeToggleEl = document.getElementById('modeToggle');
+const btnClearChat = document.getElementById('btnClearChat');
 
 // Init toggle states
 chkLearn.checked = autoLearnEnabled;
@@ -129,6 +150,15 @@ function ensureAudio() {
   if (!audioCtx) audioCtx = new AudioContext();
   if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
+}
+let audioUnlocked = false;
+function ensureAudioContexts() {
+  ensureAudio();
+  if (!audioUnlocked) {
+    // Play silent audio to unlock autoplay
+    elevenPlayer.src = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYlPEajAAAAAAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYlPEajAAAAAAAAAAAAAAAAAAAA';
+    elevenPlayer.play().then(() => { elevenPlayer.pause(); elevenPlayer.currentTime = 0; audioUnlocked = true; }).catch(() => {});
+  }
 }
 function playTone(freq, dur) {
   const ctx = ensureAudio();
@@ -142,6 +172,116 @@ function playTone(freq, dur) {
 }
 function playStart() { }
 function playStop() { }
+
+// --- TTS ---
+let cachedVoice = null;
+function getBestJaVoice() {
+  if (cachedVoice) return cachedVoice;
+  const voices = speechSynthesis.getVoices();
+  // Priority: Natural/Online voices (Nanami) > Ayumi > Haruka > any ja
+  const priority = [
+    v => /nanami/i.test(v.name) && /online|natural/i.test(v.name),
+    v => /nanami/i.test(v.name),
+    v => /online|natural/i.test(v.name) && v.lang.startsWith('ja'),
+    v => /ayumi/i.test(v.name),
+    v => /haruka/i.test(v.name),
+    v => v.lang.startsWith('ja'),
+  ];
+  for (const test of priority) {
+    const found = voices.find(test);
+    if (found) { cachedVoice = found; console.log('[TTS] Voice:', found.name); return found; }
+  }
+  return null;
+}
+function speakTTS(text) {
+  return new Promise((resolve) => {
+    if (!window.speechSynthesis) { resolve(); return; }
+    speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'ja-JP';
+    utter.rate = 1.0;   // natural pace
+    utter.pitch = 1.05;  // slightly warm
+    utter.volume = 1.0;
+    const voice = getBestJaVoice();
+    if (voice) utter.voice = voice;
+    utter.onend = () => { btn.className = chatMode ? 'idle chat-mode' : 'idle'; statusEl.textContent = '会話モード: Alt=話す'; resolve(); };
+    utter.onerror = () => { btn.className = chatMode ? 'idle chat-mode' : 'idle'; resolve(); };
+    btn.className = 'speaking';
+    statusEl.textContent = '読み上げ中...';
+    speechSynthesis.speak(utter);
+  });
+}
+function stopTTS() {
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  elevenPlayer.pause(); elevenPlayer.currentTime = 0;
+  btn.className = chatMode ? 'idle chat-mode' : 'idle';
+}
+// --- ElevenLabs Audio ---
+let elevenAudioCtx = null;
+let elevenAudio = null;
+// Hidden audio element for reliable playback
+const elevenPlayer = document.createElement('audio');
+elevenPlayer.id = 'elevenPlayer';
+document.body.appendChild(elevenPlayer);
+
+function playElevenLabsAudio(url) {
+  stopTTS();
+  wsSend({ type: 'debug', msg: 'ElevenLabs play: ' + url });
+  btn.className = 'speaking';
+  statusEl.textContent = '読み上げ中...';
+  elevenPlayer.src = url;
+  elevenPlayer.onplay = () => { wsSend({ type: 'debug', msg: 'ElevenLabs: playing' }); };
+  elevenPlayer.onended = () => {
+    wsSend({ type: 'debug', msg: 'ElevenLabs: ended' });
+    btn.className = chatMode ? 'idle chat-mode' : 'idle';
+    statusEl.textContent = '会話モード: Alt=話す';
+  };
+  elevenPlayer.onerror = (e) => {
+    wsSend({ type: 'debug', msg: 'ElevenLabs player error: ' + (elevenPlayer.error?.message || 'unknown') });
+    btn.className = chatMode ? 'idle chat-mode' : 'idle';
+    speakTTS(previewEl.textContent);
+  };
+  elevenPlayer.play().catch(err => {
+    wsSend({ type: 'debug', msg: 'ElevenLabs play() catch: ' + err.message });
+    // Fallback to browser TTS
+    speakTTS(previewEl.textContent);
+  });
+}
+// Preload voices (Edge loads them async)
+if (window.speechSynthesis) {
+  speechSynthesis.onvoiceschanged = () => { cachedVoice = null; getBestJaVoice(); };
+  getBestJaVoice();
+}
+
+// --- Chat mode ---
+function toggleChatMode() {
+  chatMode = !chatMode;
+  updateChatModeUI();
+  wsSend({ type: 'setting', key: 'chatMode', value: chatMode });
+}
+function updateChatModeUI() {
+  modeToggleEl.textContent = chatMode ? '会話' : '整形';
+  modeToggleEl.className = chatMode ? 'chat' : '';
+  chatLogEl.className = chatMode ? 'show' : '';
+  btnClearChat.style.display = chatMode ? '' : 'none';
+  if (!isListening) {
+    btn.className = chatMode ? 'idle chat-mode' : 'idle';
+    statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル';
+  }
+}
+function appendChatLog(role, text) {
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + role;
+  div.textContent = (role === 'user' ? '' : '') + text;
+  chatLogEl.appendChild(div);
+  chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+function clearChat() {
+  chatLogEl.innerHTML = '';
+  wsSend({ type: 'chat_clear' });
+  statusEl.textContent = '会話履歴クリア';
+  setTimeout(() => { statusEl.textContent = '会話モード: Alt=話す'; }, 1500);
+}
 
 // --- Settings ---
 function toggleAI() {
@@ -289,6 +429,7 @@ function connectWS() {
           setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 3000);
         }
         else if (cmd === 'beep_stop') { playStop(); }
+        else if (cmd === 'beep') { playTone(msg.freq || 800, (msg.duration || 80) / 1000); }
         else if (cmd === 'ai_on') {
           aiEnabled = true; chkAI.checked = true;
           statusEl.textContent = 'AI整形ON';
@@ -299,6 +440,28 @@ function connectWS() {
           statusEl.textContent = 'AI整形OFF';
           setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 1500);
         }
+        else if (cmd === 'tts_done') {
+          btn.className = chatMode ? 'idle chat-mode' : 'idle';
+          statusEl.textContent = '会話モード: Alt=話す';
+        }
+        else if (cmd === 'chat_mode_on') { chatMode = true; updateChatModeUI(); }
+        else if (cmd === 'chat_mode_off') { chatMode = false; stopTTS(); updateChatModeUI(); }
+      } else if (msg.type === 'chat_reply') {
+        appendChatLog('assistant', msg.text);
+        previewEl.textContent = msg.text;
+        if (msg.useElevenLabs) {
+          // Audio plays from main.js via PowerShell, just show UI
+          btn.className = 'speaking';
+          statusEl.textContent = '読み上げ中...';
+        } else {
+          speakTTS(msg.text);
+        }
+      } else if (msg.type === 'chat_error') {
+        btn.className = chatMode ? 'idle chat-mode' : 'idle';
+        statusEl.textContent = 'エラー: ' + (msg.error || '応答失敗');
+        setTimeout(() => { statusEl.textContent = '会話モード: Alt=話す'; }, 3000);
+      } else if (msg.type === 'chat_cleared') {
+        // already handled in clearChat()
       } else if (msg.type === 'learn_compare') {
         // Auto-register diffs to dictionary
         if (msg.original && msg.corrected && msg.original !== msg.corrected) {
@@ -340,6 +503,7 @@ function toggleRecord() {
 
 // --- Speech Recognition ---
 function startListening() {
+  stopTTS(); // Stop TTS to prevent feedback loop
   if (rec) { try { rec.onend = null; rec.abort(); } catch(e) {} rec = null; }
 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -363,12 +527,62 @@ function startListening() {
 
   rec.onerror = (e) => {
     wsSend({ type: 'debug', msg: 'STT error: ' + e.error });
-    if (e.error === 'not-allowed') statusEl.textContent = 'マイク許可が必要';
-    if (e.error !== 'aborted') { isListening = false; btn.className = 'idle'; }
+    if (e.error === 'not-allowed') {
+      statusEl.textContent = 'マイク許可が必要';
+      isListening = false;
+      btn.className = 'idle';
+      return;
+    }
+    // aborted以外のエラー: isListeningなら自動再起動（onendで処理）
+    if (e.error === 'aborted') return;
+    // onerror後にonendが来ない場合のフォールバック
+    if (isListening && rec) {
+      setTimeout(() => {
+        if (isListening && rec) {
+          wsSend({ type: 'debug', msg: 'STT error recovery restart' });
+          try { rec.start(); } catch(ex) {
+            // 新しいrecognizerで再試行
+            try { rec.abort(); } catch(x) {}
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (SR) {
+              const newRec = new SR();
+              newRec.lang = 'ja-JP';
+              newRec.continuous = true;
+              newRec.interimResults = true;
+              newRec.onresult = rec.onresult;
+              newRec.onerror = rec.onerror;
+              newRec.onend = rec.onend;
+              rec = newRec;
+              try { rec.start(); } catch(x2) { isListening = false; btn.className = 'idle'; }
+            }
+          }
+        }
+      }, 500);
+    }
   };
 
   rec.onend = () => {
-    if (isListening && rec) { try { rec.start(); } catch(e) { isListening = false; btn.className = 'idle'; } }
+    if (isListening && rec) {
+      wsSend({ type: 'debug', msg: 'STT onend: restarting' });
+      try { rec.start(); } catch(e) {
+        wsSend({ type: 'debug', msg: 'STT restart failed, recreating' });
+        // 再作成して再開
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SR) {
+          const newRec = new SR();
+          newRec.lang = 'ja-JP';
+          newRec.continuous = true;
+          newRec.interimResults = true;
+          newRec.onresult = rec.onresult;
+          newRec.onerror = rec.onerror;
+          newRec.onend = rec.onend;
+          rec = newRec;
+          try { rec.start(); } catch(e2) { isListening = false; btn.className = 'idle'; }
+        } else {
+          isListening = false; btn.className = 'idle';
+        }
+      }
+    }
   };
 
   try {
@@ -383,12 +597,42 @@ function startListening() {
   }
 }
 
+let sendGuard = false; // 二重送信防止
+
 function stopAndSend() {
   isListening = false;
+  sendGuard = false;
+
+  if (rec) {
+    // onendで最後のonresultを待ってからテキスト送信
+    rec.onend = () => {
+      rec = null;
+      if (!sendGuard) { sendGuard = true; sendAccumulated(); }
+    };
+    // onresultは引き続き動くのでaccumulatedが更新される
+    try { rec.stop(); } catch(e) {
+      rec = null;
+      if (!sendGuard) { sendGuard = true; sendAccumulated(); }
+    }
+
+    // フォールバック: 400ms以内にonendが来なかったら強制送信
+    setTimeout(() => {
+      if (!sendGuard) {
+        sendGuard = true;
+        wsSend({ type: 'debug', msg: 'stopAndSend: onend timeout, force send' });
+        if (rec) { try { rec.onend = null; rec.abort(); } catch(e) {} rec = null; }
+        sendAccumulated();
+      }
+    }, 400);
+  } else {
+    sendGuard = true;
+    sendAccumulated();
+  }
+}
+
+function sendAccumulated() {
   let text = accumulated;
   accumulated = '';
-
-  if (rec) { rec.onend = null; try { rec.stop(); } catch(e) {} rec = null; }
 
   if (text && text.trim()) text = applyDict(text);
 
@@ -397,13 +641,19 @@ function stopAndSend() {
   if (text && text.trim()) {
     lastResult = text;
     btn.className = 'processing';
-    statusEl.textContent = aiEnabled ? 'AI整形中...' : '出力中...';
-    wsSend({ type: 'result', text: text });
+    if (chatMode) {
+      statusEl.textContent = 'AI応答中...';
+      appendChatLog('user', text);
+      wsSend({ type: 'chat_input', text: text });
+    } else {
+      statusEl.textContent = aiEnabled ? 'AI整形中...' : '出力中...';
+      wsSend({ type: 'result', text: text });
+    }
   } else {
-    btn.className = 'idle';
+    btn.className = chatMode ? 'idle chat-mode' : 'idle';
     statusEl.textContent = 'テキストなし';
     previewEl.textContent = '';
-    setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 1500);
+    setTimeout(() => { statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル'; }, 1500);
   }
 }
 
