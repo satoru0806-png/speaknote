@@ -1,6 +1,36 @@
 import { securityCheck, validateTextInput } from './_security.js';
 import { getUser, incrementUsage } from './_supabase.js';
 
+// Pro APIキーの検証（キー = Stripe顧客ID、アクティブなサブスクがあるか確認）
+// 結果を1時間キャッシュ
+// Note: Stripe SDKの接続問題を回避するため、fetch APIを直接使用
+const proCache = new Map(); // Map<apiKey, { valid: boolean, expires: number }>
+
+async function checkProApiKey(req) {
+  const apiKey = req.headers['x-api-key'] || req.body?.apiKey;
+  if (!apiKey) return false;
+
+  // キャッシュ確認
+  const cached = proCache.get(apiKey);
+  if (cached && Date.now() < cached.expires) return cached.valid;
+
+  // Stripe検証
+  const secretKey = process.env.STRIPE_SECRET_KEY;
+  if (!secretKey) return false;
+
+  try {
+    const response = await fetch(`https://api.stripe.com/v1/subscriptions?customer=${apiKey}&status=active&limit=1`, {
+      headers: { 'Authorization': `Bearer ${secretKey}` },
+    });
+    const subs = await response.json();
+    const valid = (subs.data?.length || 0) > 0;
+    proCache.set(apiKey, { valid, expires: Date.now() + 3600000 }); // 1時間キャッシュ
+    return valid;
+  } catch {
+    return false;
+  }
+}
+
 // IPベースの1日制限（未ログインユーザー向け）
 // Vercel Serverlessのcold startでリセットされるが、最小限の制限として有効
 const IP_DAILY_LIMIT = 10;
@@ -37,26 +67,35 @@ export default async function handler(req, res) {
   const text = validateTextInput(req, res, 'text');
   if (text === null) return;
 
-  // 認証チェック（オプション：トークンがあれば使用量管理）
-  const { user } = await getUser(req);
-  if (user) {
-    const usage = await incrementUsage(user.id);
-    if (!usage.allowed) {
-      return res.status(429).json({ error: usage.reason, plan: usage.plan });
+  // Pro APIキーチェック（キーがあれば無制限）
+  const isPro = await checkProApiKey(req);
+
+  if (!isPro) {
+    // 認証チェック（オプション：トークンがあれば使用量管理）
+    const { user } = await getUser(req);
+    if (user) {
+      const usage = await incrementUsage(user.id);
+      if (!usage.allowed) {
+        return res.status(429).json({ error: usage.reason, plan: usage.plan });
+      }
+      res.setHeader('X-Usage-Count', usage.usage?.toString() || '0');
+      res.setHeader('X-Usage-Limit', usage.limit?.toString() || '30');
+    } else {
+      // 未ログインユーザー：IPベースの1日10回制限
+      const ipLimit = checkIpDailyLimit(security.ip);
+      res.setHeader('X-Usage-Count', ipLimit.count.toString());
+      res.setHeader('X-Usage-Limit', ipLimit.limit.toString());
+      if (!ipLimit.allowed) {
+        return res.status(429).json({
+          error: '1日の無料回数（10回）を超えました。Proプランにアップグレードしてください。',
+          plan: 'free',
+        });
+      }
     }
-    res.setHeader('X-Usage-Count', usage.usage?.toString() || '0');
-    res.setHeader('X-Usage-Limit', usage.limit?.toString() || '30');
-  } else {
-    // 未ログインユーザー：IPベースの1日10回制限
-    const ipLimit = checkIpDailyLimit(security.ip);
-    res.setHeader('X-Usage-Count', ipLimit.count.toString());
-    res.setHeader('X-Usage-Limit', ipLimit.limit.toString());
-    if (!ipLimit.allowed) {
-      return res.status(429).json({
-        error: '1日の無料回数（10回）を超えました。Proプランにアップグレードしてください。',
-        plan: 'free',
-      });
-    }
+  }
+  // Proユーザーは制限なし
+  if (isPro) {
+    res.setHeader('X-Plan', 'pro');
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;

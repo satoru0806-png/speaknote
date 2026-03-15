@@ -2,8 +2,8 @@
  * Stripe Checkout Session 作成 API
  * Pro プラン ¥500/月（サブスクリプション）
  * 環境変数: STRIPE_SECRET_KEY, STRIPE_PRICE_PRO
+ * Note: Stripe SDKの接続問題を回避するため、fetch APIを直接使用
  */
-import Stripe from 'stripe';
 
 export default async function handler(req, res) {
   // CORS ヘッダ
@@ -17,28 +17,38 @@ export default async function handler(req, res) {
   const secretKey = process.env.STRIPE_SECRET_KEY;
   if (!secretKey) return res.status(500).json({ error: 'Stripe not configured' });
 
-  const stripe = new Stripe(secretKey);
-
-  // Price ID: 環境変数 STRIPE_PRICE_PRO が未設定の場合は動的に月額500円プランを作成
   const priceId = process.env.STRIPE_PRICE_PRO;
-  if (!priceId) {
-    return res.status(500).json({ error: 'STRIPE_PRICE_PRO not configured' });
-  }
+  if (!priceId) return res.status(500).json({ error: 'STRIPE_PRICE_PRO not configured' });
 
   const origin = req.headers.origin || process.env.APP_URL || 'https://web-five-alpha-24.vercel.app';
 
   try {
-    const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      payment_method_types: ['card'],
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${origin}/pro-success.html?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/lp.html`,
+    const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${secretKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        'mode': 'subscription',
+        'payment_method_types[]': 'card',
+        'line_items[0][price]': priceId,
+        'line_items[0][quantity]': '1',
+        'success_url': `${origin}/pro-success.html?session_id={CHECKOUT_SESSION_ID}`,
+        'cancel_url': `${origin}/lp.html`,
+      }).toString(),
     });
 
-    return res.status(200).json({ url: session.url });
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('[create-checkout] Stripe API error:', data);
+      return res.status(500).json({ error: data.error?.message || 'Stripe error' });
+    }
+
+    return res.status(200).json({ url: data.url });
   } catch (err) {
-    console.error('[create-checkout] Stripe error:', err.message);
+    console.error('[create-checkout] Error:', err.message);
     return res.status(500).json({ error: err.message });
   }
 }
