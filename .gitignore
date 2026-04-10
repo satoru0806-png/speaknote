@@ -36,8 +36,18 @@ yarn-error.log*
 # vercel
 .vercel
 
+# agent traces
+.agent-trace/
+.agent_usage_state.json
+.workflow_state.json
+.mcp.json
+.claude/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 
 .vercel
+
+# Electron build output
+/dist/

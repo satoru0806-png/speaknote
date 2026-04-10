@@ -26,7 +26,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja">
-      <body className="antialiased bg-gray-50 text-gray-900 min-h-screen">
+      <body className="antialiased text-gray-900 min-h-screen" style={{ background: "transparent" }}>
         {children}
       </body>
     </html>

@@ -78,6 +78,8 @@ body { font-family:'Segoe UI',sans-serif; background:#1a1a2e; color:#fff; height
 </button>
 <div id="status">接続中...</div>
 <div id="preview"></div>
+
+<!-- 初回オンボーディング -->
 <div id="chatLog"></div>
 
 <!-- Settings -->
@@ -428,8 +430,8 @@ function connectWS() {
           statusEl.textContent = 'Keep保存! (Ctrl+Vで貼り付け)';
           setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 3000);
         }
-        else if (cmd === 'beep_stop') { playStop(); }
-        else if (cmd === 'beep') { playTone(msg.freq || 800, (msg.duration || 80) / 1000); }
+        else if (cmd === 'beep_stop') { /* 無効化 */ }
+        else if (cmd === 'beep') { /* 無効化 */ }
         else if (cmd === 'ai_on') {
           aiEnabled = true; chkAI.checked = true;
           statusEl.textContent = 'AI整形ON';
@@ -446,6 +448,17 @@ function connectWS() {
         }
         else if (cmd === 'chat_mode_on') { chatMode = true; updateChatModeUI(); }
         else if (cmd === 'chat_mode_off') { chatMode = false; stopTTS(); updateChatModeUI(); }
+      } else if (msg.type === 'whisper_result') {
+        // main.jsからWhisper結果を受信
+        stoppingLock = false;
+        if (msg.text) {
+          accumulated = msg.text;
+          sendAccumulated();
+        } else {
+          btn.className = chatMode ? 'idle chat-mode' : 'idle';
+          statusEl.textContent = msg.error || '文字起こし失敗';
+          setTimeout(() => { statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル'; }, 2000);
+        }
       } else if (msg.type === 'chat_reply') {
         appendChatLog('assistant', msg.text);
         previewEl.textContent = msg.text;
@@ -501,133 +514,113 @@ function toggleRecord() {
   else startListening();
 }
 
-// --- Speech Recognition ---
-function startListening() {
-  stopTTS(); // Stop TTS to prevent feedback loop
-  if (rec) { try { rec.onend = null; rec.abort(); } catch(e) {} rec = null; }
+// --- Whisper録音 (MediaRecorder) + リアルタイムプレビュー (SpeechRecognition) ---
+let mediaRecorder = null;
+let audioChunks = [];
+let mediaStream = null;
+let liveRecognition = null;
+let liveText = '';
+let liveInterim = '';
+const WHISPER_API = 'https://web-five-alpha-24.vercel.app/api/transcribe';
+const WHISPER_KEY = 'speaknote-owner-pro-2026';
 
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { statusEl.textContent = 'Speech API未対応'; return; }
+let startingLock = false;
 
-  accumulated = '';
-  rec = new SR();
-  rec.lang = 'ja-JP';
-  rec.continuous = true;
-  rec.interimResults = true;
+// リアルタイム音声認識（プレビュー用）
+// --- Whisper録音 (MediaRecorder) ---
 
-  rec.onresult = (e) => {
-    let finals = '', interim = '';
-    for (let i = 0; i < e.results.length; i++) {
-      if (e.results[i].isFinal) finals += e.results[i][0].transcript;
-      else interim += e.results[i][0].transcript;
-    }
-    accumulated = finals + interim;
-    previewEl.textContent = (finals || '') + (interim ? ' ...' + interim : '');
-  };
-
-  rec.onerror = (e) => {
-    wsSend({ type: 'debug', msg: 'STT error: ' + e.error });
-    if (e.error === 'not-allowed') {
-      statusEl.textContent = 'マイク許可が必要';
-      isListening = false;
-      btn.className = 'idle';
-      return;
-    }
-    // aborted以外のエラー: isListeningなら自動再起動（onendで処理）
-    if (e.error === 'aborted') return;
-    // onerror後にonendが来ない場合のフォールバック
-    if (isListening && rec) {
-      setTimeout(() => {
-        if (isListening && rec) {
-          wsSend({ type: 'debug', msg: 'STT error recovery restart' });
-          try { rec.start(); } catch(ex) {
-            // 新しいrecognizerで再試行
-            try { rec.abort(); } catch(x) {}
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (SR) {
-              const newRec = new SR();
-              newRec.lang = 'ja-JP';
-              newRec.continuous = true;
-              newRec.interimResults = true;
-              newRec.onresult = rec.onresult;
-              newRec.onerror = rec.onerror;
-              newRec.onend = rec.onend;
-              rec = newRec;
-              try { rec.start(); } catch(x2) { isListening = false; btn.className = 'idle'; }
-            }
-          }
-        }
-      }, 500);
-    }
-  };
-
-  rec.onend = () => {
-    if (isListening && rec) {
-      wsSend({ type: 'debug', msg: 'STT onend: restarting' });
-      try { rec.start(); } catch(e) {
-        wsSend({ type: 'debug', msg: 'STT restart failed, recreating' });
-        // 再作成して再開
-        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (SR) {
-          const newRec = new SR();
-          newRec.lang = 'ja-JP';
-          newRec.continuous = true;
-          newRec.interimResults = true;
-          newRec.onresult = rec.onresult;
-          newRec.onerror = rec.onerror;
-          newRec.onend = rec.onend;
-          rec = newRec;
-          try { rec.start(); } catch(e2) { isListening = false; btn.className = 'idle'; }
-        } else {
-          isListening = false; btn.className = 'idle';
-        }
-      }
-    }
-  };
-
+async function startListening() {
+  if (isListening || startingLock) return;
+  startingLock = true;
+  isListening = true;
+  stopTTS();
+  playTone(880, 0.08);
   try {
-    rec.start();
-    isListening = true;
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    accumulated = '';
+
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : 'audio/mp4';
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.start();
     btn.className = 'listening';
     statusEl.textContent = '録音中...';
-    playStart();
-    wsSend({ type: 'debug', msg: 'rec.start() OK' });
+    previewEl.textContent = '🎤 録音中...';
+    wsSend({ type: 'debug', msg: 'MediaRecorder start OK' });
   } catch(e) {
+    isListening = false;
     statusEl.textContent = '録音失敗: ' + e.message;
   }
+  startingLock = false;
 }
 
 let sendGuard = false; // 二重送信防止
 
-function stopAndSend() {
+let stoppingLock = false;
+async function stopAndSend() {
+  if (!isListening || stoppingLock) return;
+  stoppingLock = true;
   isListening = false;
-  sendGuard = false;
+  playTone(660, 0.08);
+  btn.className = 'processing';
+  btn.className = 'processing';
+  statusEl.textContent = 'Whisper文字起こし中...';
+  previewEl.textContent = '';
 
-  if (rec) {
-    // onendで最後のonresultを待ってからテキスト送信
-    rec.onend = () => {
-      rec = null;
-      if (!sendGuard) { sendGuard = true; sendAccumulated(); }
-    };
-    // onresultは引き続き動くのでaccumulatedが更新される
-    try { rec.stop(); } catch(e) {
-      rec = null;
-      if (!sendGuard) { sendGuard = true; sendAccumulated(); }
-    }
+  const rec = mediaRecorder; // ローカル参照を保持
+  if (rec && rec.state !== 'inactive') {
+    // MediaRecorder停止 → ondataavailable完了を待ってからWhisper送信
+    rec.onstop = async () => {
+      // マイク解放
+      if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+      wsSend({ type: 'debug', msg: 'onstop fired, chunks=' + audioChunks.length });
 
-    // フォールバック: 400ms以内にonendが来なかったら強制送信
-    setTimeout(() => {
-      if (!sendGuard) {
-        sendGuard = true;
-        wsSend({ type: 'debug', msg: 'stopAndSend: onend timeout, force send' });
-        if (rec) { try { rec.onend = null; rec.abort(); } catch(e) {} rec = null; }
-        sendAccumulated();
+      if (audioChunks.length === 0) {
+        stoppingLock = false;
+        btn.className = chatMode ? 'idle chat-mode' : 'idle';
+        statusEl.textContent = 'テキストなし';
+        return;
       }
-    }, 400);
+
+      try {
+        const blob = new Blob(audioChunks, { type: rec.mimeType });
+        audioChunks = [];
+        const base64 = await blobToBase64(blob);
+        const fmt = rec.mimeType.includes('mp4') ? 'mp4' : 'webm';
+
+        wsSend({ type: 'debug', msg: 'Whisper送信: ' + Math.round(base64.length/1024) + 'KB' });
+        // main.js経由でWhisper API呼び出し（CORS回避）
+        wsSend({ type: 'whisper_request', audio: base64, format: fmt });
+      } catch(e) {
+        wsSend({ type: 'debug', msg: 'Whisper encode error: ' + e.message });
+        stoppingLock = false;
+        btn.className = chatMode ? 'idle chat-mode' : 'idle';
+        statusEl.textContent = '文字起こし失敗: ' + e.message;
+        setTimeout(() => { statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル'; }, 2000);
+      }
+    };
+    rec.stop();
   } else {
-    sendGuard = true;
-    sendAccumulated();
+    // MediaRecorderがない場合（フォールバック）
+    if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+    stoppingLock = false;
+    btn.className = chatMode ? 'idle chat-mode' : 'idle';
+    statusEl.textContent = 'テキストなし';
   }
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 function sendAccumulated() {

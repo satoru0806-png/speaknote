@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>SpeakNote テスター設定</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+body {
+  background: linear-gradient(135deg, #1a1a2e, #16213e);
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+  min-height: 100vh;
+  padding: 20px;
+  line-height: 1.6;
+}
+.container {
+  max-width: 500px;
+  margin: 0 auto;
+}
+h1 {
+  font-size: 28px;
+  text-align: center;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.subtitle {
+  text-align: center;
+  color: #aaa;
+  font-size: 14px;
+  margin-bottom: 30px;
+}
+.status-box {
+  background: rgba(102, 126, 234, 0.1);
+  border: 2px solid #667eea;
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 24px;
+  text-align: center;
+}
+.status-box.success {
+  background: rgba(46, 213, 115, 0.1);
+  border-color: #2ed573;
+}
+.status-box.warning {
+  background: rgba(243, 156, 18, 0.1);
+  border-color: #f39c12;
+}
+.status-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+.status-title {
+  font-size: 18px;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+.status-desc {
+  font-size: 13px;
+  color: #ccc;
+}
+.step {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.step-num {
+  background: #667eea;
+  color: #fff;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+.step-content {
+  flex: 1;
+}
+.step-title {
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+.step-desc {
+  font-size: 13px;
+  color: #aaa;
+}
+.btn {
+  display: block;
+  width: 100%;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: #fff;
+  border: none;
+  padding: 16px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: bold;
+  margin: 20px 0;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+}
+.btn:active {
+  transform: scale(0.98);
+}
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.1);
+}
+.key-display {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 12px;
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 12px;
+  word-break: break-all;
+  margin: 12px 0;
+  color: #f39c12;
+}
+.warning-line {
+  background: rgba(243, 156, 18, 0.15);
+  border-left: 4px solid #f39c12;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin: 16px 0;
+  font-size: 13px;
+  color: #ffd480;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>SpeakNote</h1>
+  <p class="subtitle">テスター版セットアップ</p>
+
+  <div id="statusBox" class="status-box">
+    <div class="status-icon">⏳</div>
+    <div class="status-title">セットアップ中...</div>
+    <div class="status-desc">少々お待ちください</div>
+  </div>
+
+  <div id="lineWarning" style="display:none;">
+    <div class="warning-line">
+      ⚠️ LINEのブラウザではマイクが使えません
+    </div>
+    <p style="text-align:center; color:#aaa; font-size:13px; margin-bottom:20px;">
+      下のボタンをタップして<br>Chrome または Safari で開いてください
+    </p>
+    <a id="openExternalBtn" href="#" class="btn">🌐 ブラウザで開く</a>
+    <p style="text-align:center; color:#666; font-size:11px; margin-top:12px;">
+      開けない場合: 右上の「︙」→「他のブラウザで開く」
+    </p>
+  </div>
+
+  <div id="setupDone" style="display:none;">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <div class="step-title">✅ Pro設定完了！</div>
+        <div class="step-desc">テスター用Pro機能が有効になりました</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <div class="step-title">ホーム画面に追加（推奨）</div>
+        <div class="step-desc" id="addHomeInstructions">
+          アプリのように使えます
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <div class="step-title">マイクをタップして話すだけ</div>
+        <div class="step-desc">自動でテキスト化＆文章整形されます</div>
+      </div>
+    </div>
+
+    <a href="/" class="btn">SpeakNoteを開く</a>
+  </div>
+</div>
+
+<script>
+(function() {
+  const ua = navigator.userAgent || '';
+  const isLine = /Line\//i.test(ua);
+  const isFB = /FBAN|FBAV/i.test(ua);
+  const isInsta = /Instagram/i.test(ua);
+  const isTwitter = /Twitter/i.test(ua);
+  const isInApp = isLine || isFB || isInsta || isTwitter;
+  const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const isAndroid = /Android/i.test(ua);
+
+  const urlKey = new URLSearchParams(window.location.search).get('key');
+
+  // In-appブラウザ検出
+  if (isInApp) {
+    document.getElementById('statusBox').style.display = 'none';
+    document.getElementById('lineWarning').style.display = 'block';
+    // 外部ブラウザで開くボタン
+    const externalUrl = window.location.href;
+    const btn = document.getElementById('openExternalBtn');
+    btn.href = externalUrl;
+    btn.onclick = function(e) {
+      e.preventDefault();
+      if (isAndroid) {
+        // Android: Chrome Intent
+        window.location.href = 'intent://' + externalUrl.replace(/^https?:\/\//, '') +
+          '#Intent;scheme=https;package=com.android.chrome;end';
+      } else if (isIOS) {
+        // iOS: x-safari-https:// で Safari を開く
+        window.location.href = 'x-safari-https://' + externalUrl.replace(/^https?:\/\//, '');
+      }
+    };
+    return;
+  }
+
+  // キーを保存
+  if (urlKey) {
+    localStorage.setItem('speaknote_pro_key', urlKey.trim());
+  }
+
+  // 保存状態を確認
+  const savedKey = localStorage.getItem('speaknote_pro_key') || '';
+  const statusBox = document.getElementById('statusBox');
+
+  if (savedKey) {
+    statusBox.className = 'status-box success';
+    statusBox.innerHTML = `
+      <div class="status-icon">✅</div>
+      <div class="status-title">設定完了！</div>
+      <div class="status-desc">Pro機能が有効です</div>
+    `;
+    document.getElementById('setupDone').style.display = 'block';
+
+    // ホーム画面追加の手順をOS別に表示
+    const addEl = document.getElementById('addHomeInstructions');
+    if (isIOS) {
+      addEl.innerHTML = '下の「共有」ボタン <span style="font-size:16px;">⬆️</span> → 「ホーム画面に追加」';
+    } else if (isAndroid) {
+      addEl.innerHTML = '右上の「︙」メニュー → 「ホーム画面に追加」';
+    } else {
+      addEl.innerHTML = 'ブラウザのメニューから「ホーム画面に追加」';
+    }
+  } else {
+    statusBox.className = 'status-box warning';
+    statusBox.innerHTML = `
+      <div class="status-icon">⚠️</div>
+      <div class="status-title">キーが見つかりません</div>
+      <div class="status-desc">テスト担当者から送られたURLをもう一度お試しください</div>
+    `;
+  }
+})();
+</script>
+</body>
+</html>

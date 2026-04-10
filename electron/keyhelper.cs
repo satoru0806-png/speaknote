@@ -59,7 +59,6 @@ class Program {
 
     // Release all modifier keys that might be stuck
     static void ReleaseModifiers() {
-        // Release Alt, Ctrl, Shift, Win if any are stuck
         int[] mods = { VK_MENU, VK_CONTROL, VK_SHIFT, VK_LWIN };
         foreach (var vk in mods) {
             if ((GetAsyncKeyState(vk) & 0x8000) != 0) {
@@ -67,21 +66,67 @@ class Program {
                 SendInput(1, up, Marshal.SizeOf(typeof(INPUT)));
             }
         }
+        // Escapeでメニューを閉じる（Alt+VでViewメニューが開く問題対策）
+        var esc = new[] { MakeKey(VK_ESCAPE, 0), MakeKey(VK_ESCAPE, KEYEVENTF_KEYUP) };
+        SendInput((uint)esc.Length, esc, Marshal.SizeOf(typeof(INPUT)));
+        Thread.Sleep(50);
+    }
+
+    [DllImport("user32.dll")]
+    static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("user32.dll")]
+    static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("kernel32.dll")]
+    static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    static extern bool BringWindowToTop(IntPtr hWnd);
+
+    static void ForceForeground(IntPtr hwnd) {
+        uint myThread = GetCurrentThreadId();
+        uint pid;
+        uint targetThread = GetWindowThreadProcessId(hwnd, out pid);
+        if (myThread != targetThread) {
+            AttachThreadInput(myThread, targetThread, true);
+            SetForegroundWindow(hwnd);
+            BringWindowToTop(hwnd);
+            AttachThreadInput(myThread, targetThread, false);
+        } else {
+            SetForegroundWindow(hwnd);
+        }
     }
 
     static void Main(string[] args) {
         string mode = args.Length > 0 ? args[0] : "paste";
 
-        if (mode == "paste") {
-            // Step 1: Release all stuck modifier keys
+        if (mode == "focuspaste" && args.Length > 1) {
+            // hwnd指定でフォーカス復元してから貼り付け
+            IntPtr hwnd = new IntPtr(long.Parse(args[1]));
+            ReleaseModifiers();
+            Thread.Sleep(30);
+            ForceForeground(hwnd);
+            Thread.Sleep(100);
+            ForceForeground(hwnd);
+            Thread.Sleep(30);
+            var inputs = new[] {
+                MakeKey(VK_CONTROL, 0),
+                MakeKey(VK_V, 0),
+                MakeKey(VK_V, KEYEVENTF_KEYUP),
+                MakeKey(VK_CONTROL, KEYEVENTF_KEYUP)
+            };
+            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+        } else if (mode == "paste") {
             ReleaseModifiers();
             Thread.Sleep(50);
-
-            // Step 2: Click to ensure focus is in the text field (skip Esc which would close Keep notes)
-            // Just a small delay to let OS settle
             Thread.Sleep(30);
-
-            // Step 3: Ctrl+V with scan codes (works in Google Keep, contenteditable, etc.)
             var inputs = new[] {
                 MakeKey(VK_CONTROL, 0),
                 MakeKey(VK_V, 0),

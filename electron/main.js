@@ -14,13 +14,14 @@ let autoLearnEnabled = false; // Auto-learn toggle
 let userDict = []; // User dictionary [{from, to}]
 let lastPastedText = ""; // Last pasted text for Keep saving
 let chatMode = false; // false=整形, true=会話
+let isProcessing = false; // Whisper処理中フラグ
 let chatHistory = []; // [{role, content}, ...]
 const MAX_CHAT_TURNS = 20;
 
 // --- Vercel API base URL ---
 const VERCEL_API = "https://web-five-alpha-24.vercel.app";
 
-// --- Load optional keys (ElevenLabs only) ---
+// --- Load optional keys ---
 const envPath = path.join(__dirname, "..", ".env.local");
 let ELEVENLABS_API_KEY = "";
 try {
@@ -74,13 +75,16 @@ function elevenLabsTTS(text) {
 function cleanWithAI(rawText) {
   return new Promise((resolve) => {
     if (!rawText.trim()) { resolve(rawText); return; }
+    // 30文字以下は整形スキップ（高速化）
+    if (rawText.trim().length <= 30) { resolve(rawText); return; }
+    // Vercel API経由
     const body = JSON.stringify({ text: rawText });
     const req = https.request({
       hostname: new URL(VERCEL_API).hostname,
       path: "/api/clean",
       method: "POST",
       headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
-      timeout: 15000,
+      timeout: 10000,
     }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => { chunks.push(chunk); });
@@ -185,43 +189,50 @@ function checkPreviousPaste() {
   }
 }
 
+function autoFixText(t) {
+  return t
+    .replace(/ではる/g, 'である').replace(/ではり/g, 'であり')
+    .replace(/がはる/g, 'がある').replace(/がはり/g, 'があり')
+    .replace(/にはる/g, 'にある').replace(/もはる/g, 'もある')
+    .replace(/てはる/g, 'てある').replace(/はりがとう/g, 'ありがとう')
+    .replace(/おはいよう/g, 'おはよう').replace(/すいません/g, 'すみません')
+    .replace(/こんにちわ/g, 'こんにちは').replace(/こんばんわ/g, 'こんばんは');
+}
+
 function pasteText(text) {
+  text = autoFixText(text);
   clipboard.writeText(text);
-  lastPastedText = text; // Save for F10 Keep
+  lastPastedText = text;
   console.log("[SpeakNote] クリップボード:", text);
 
-  // Restore focus to the window that was active when Alt was pressed
+  // フォーカス復元してからkeyhelperで貼り付け
   if (savedHwnd && SetForegroundWindow) {
-    console.log("[SpeakNote] フォーカス復元: hwnd=", savedHwnd);
-    // Try 3 times to ensure focus is restored
     SetForegroundWindow(savedHwnd);
-    setTimeout(() => SetForegroundWindow(savedHwnd), 80);
   }
-
-  // Wait for focus restoration, then paste (keyhelper handles Alt-up + Ctrl+V)
   setTimeout(() => {
-    if (savedHwnd && SetForegroundWindow) SetForegroundWindow(savedHwnd);
-    setTimeout(() => {
-      execFile(keyhelper, ["paste"], { timeout: 3000 }, (err) => {
-        if (err) console.error("[SpeakNote] Paste error:", err.message);
-        else {
-          console.log("[SpeakNote] 貼り付け完了");
-          if (autoLearnEnabled) {
-            pendingLearnCheck = { text: text, hwnd: savedHwnd };
-          }
-        }
-      });
-    }, 100);
-  }, 200);
+    const hwndStr = savedHwnd ? String(savedHwnd) : "0";
+    console.log("[SpeakNote] focuspaste hwnd:", hwndStr);
+    execFile(keyhelper, ["focuspaste", hwndStr], { timeout: 3000 }, (err) => {
+      if (err) {
+        console.log("[SpeakNote] focuspaste失敗、通常paste:", err.message);
+        execFile(keyhelper, ["paste"], { timeout: 3000 }, () => {});
+      } else {
+        console.log("[SpeakNote] 貼り付け完了");
+      }
+      if (autoLearnEnabled) {
+        pendingLearnCheck = { text: text, hwnd: savedHwnd };
+      }
+    });
+  }, 100);
 }
 
 // --- System beep (PowerShell singleton for speed) ---
 let beepProcess = null;
 function playBeep(freq, duration) {
-  exec(`powershell -NoProfile -c "[console]::beep(${freq},${duration})"`, { windowsHide: true, timeout: 3000 });
+  // PowerShellビープ無効化（speech.htmlのWebAudioのみ使用し、二重鳴りを防止）
 }
-function playStartBeep() { playBeep(1000, 80); }
-function playStopBeep() { playBeep(800, 80); }
+function playStartBeep() { }
+function playStopBeep() { }
 
 // --- Send command to Edge via WebSocket ---
 function sendCommand(cmd) {
@@ -268,7 +279,47 @@ wss.on("connection", (ws) => {
   ws.on("message", async (data) => {
     try {
       const msg = JSON.parse(data);
-      if (msg.type === "result" && msg.text) {
+      if (msg.type === "whisper_request" && msg.audio) {
+        isProcessing = true;
+        console.log("[SpeakNote] Whisper API呼び出し:", Math.round(msg.audio.length/1024) + "KB");
+        try {
+          const body = JSON.stringify({ audio: msg.audio, format: msg.format || 'webm' });
+          const result = await new Promise((resolve, reject) => {
+            const apiReq = https.request({
+              hostname: new URL(VERCEL_API).hostname,
+              path: "/api/transcribe",
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Api-Key": "speaknote-owner-pro-2026",
+                "Content-Length": Buffer.byteLength(body),
+              },
+              timeout: 60000,
+            }, (res) => {
+              const chunks = [];
+              res.on("data", (chunk) => chunks.push(chunk));
+              res.on("end", () => {
+                try {
+                  const data = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+                  resolve(data);
+                } catch { resolve({}); }
+              });
+            });
+            apiReq.on("error", (e) => reject(e));
+            apiReq.on("timeout", () => { apiReq.destroy(); reject(new Error("timeout")); });
+            apiReq.write(body);
+            apiReq.end();
+          });
+          let text = result.text || "";
+          console.log("[SpeakNote] Whisper結果:", text.substring(0, 50));
+          isProcessing = false;
+          ws.send(JSON.stringify({ type: "whisper_result", text }));
+        } catch (e) {
+          console.error("[SpeakNote] Whisper APIエラー:", e.message);
+          isProcessing = false;
+          ws.send(JSON.stringify({ type: "whisper_result", text: "", error: "Whisper失敗: " + e.message }));
+        }
+      } else if (msg.type === "result" && msg.text) {
         console.log("[SpeakNote] 認識結果(raw):", msg.text);
         const rawText = msg.text;
         let finalText = rawText;
@@ -282,6 +333,7 @@ wss.on("connection", (ws) => {
         for (const entry of userDict) {
           finalText = finalText.split(entry.from).join(entry.to);
         }
+        isProcessing = false;
         pasteText(finalText);
         // Send both raw and final text back for diff detection
         ws.send(JSON.stringify({ type: "pasted", raw: rawText, text: finalText }));
@@ -398,7 +450,7 @@ function launchEdge() {
 // --- Tray ---
 function createTray() {
   tray = new Tray(path.join(__dirname, "icon.ico"));
-  tray.setToolTip("SpeakNote - Alt=録音 / F8=会話 / F9=トグル / F10=Keep / F11=AI切替");
+  tray.setToolTip("SpeakNote - 右Alt=録音 / F8=会話 / F9=トグル / F10=Keep / F11=AI切替");
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "Edge表示", click: launchEdge },
     { type: "separator" },
@@ -494,22 +546,24 @@ app.whenReady().then(() => {
     const koffi = require("koffi");
     const user32 = koffi.load("user32.dll");
     const GetAsyncKeyState = user32.func("short GetAsyncKeyState(int vKey)");
-    const GetForegroundWindow = user32.func("void* GetForegroundWindow()");
-    SetForegroundWindow = user32.func("int SetForegroundWindow(void* hWnd)");
-
+    const GetForegroundWindow = user32.func("uintptr_t GetForegroundWindow()");
+    SetForegroundWindow = user32.func("int SetForegroundWindow(uintptr_t hWnd)");
     let altWasDown = false;
     let stopTimer = null;
 
     setInterval(() => {
-      const isDown = (GetAsyncKeyState(0x12) & 0x8000) !== 0;
+      const isDown = (GetAsyncKeyState(0xA5) & 0x8000) !== 0; // 0xA5 = Right Alt only
       if (isDown && !altWasDown) {
         altWasDown = true;
         if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
         // Check previous paste for corrections (only when auto-learn is ON)
         if (autoLearnEnabled) checkPreviousPaste();
         // Save the currently focused window BEFORE Edge gets focus
-        savedHwnd = GetForegroundWindow();
-        console.log("[SpeakNote] 保存hwnd:", savedHwnd);
+        // processingフラグがONの時（Whisper処理中）はhwndを更新しない
+        if (!isProcessing) {
+          savedHwnd = GetForegroundWindow();
+        }
+        console.log("[SpeakNote] 保存hwnd:", savedHwnd, isProcessing ? "(処理中:保持)" : "(更新)");
         playStartBeep();
         sendCommand("start");
       } else if (!isDown && altWasDown) {

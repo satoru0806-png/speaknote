@@ -100,6 +100,39 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
 
 @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
 
+/* Pro key */
+#proBtn {
+  background: none; border: 1px solid #555; color: #888; font-size: 11px;
+  padding: 4px 10px; border-radius: 12px; cursor: pointer;
+}
+#proBtn.active { border-color: #667eea; color: #667eea; }
+#proModal {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  z-index: 100; align-items: center; justify-content: center;
+}
+#proModal.show { display: flex; }
+#proModal .modal {
+  background: #16213e; border-radius: 16px; padding: 28px 24px;
+  max-width: 360px; width: 90%; text-align: center;
+}
+#proModal h2 { font-size: 16px; margin-bottom: 12px; }
+#proModal input {
+  width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #444;
+  background: #0a0a1a; color: #2ed573; font-family: monospace; font-size: 14px;
+  margin-bottom: 12px;
+}
+#proModal .modal-btns { display: flex; gap: 8px; }
+#proModal .modal-btns button {
+  flex: 1; padding: 10px; border-radius: 8px; border: none; font-size: 13px; cursor: pointer;
+}
+#proSave { background: #667eea; color: #fff; }
+#proRemove { background: #333; color: #e74c3c; }
+#proCancel { background: #333; color: #aaa; }
+#proPlan {
+  font-size: 11px; color: #888; margin-top: 8px;
+}
+#proPlan.pro { color: #2ed573; }
+
 /* Toast */
 #toast {
   position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
@@ -146,11 +179,29 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
     AI整形
     <label class="sw"><input type="checkbox" id="chkAI" checked><span class="track"></span></label>
   </div>
+  <button id="proBtn" onclick="openProModal()">Pro</button>
+</div>
+<div id="proPlan"></div>
+
+<!-- Pro key modal -->
+<div id="proModal">
+  <div class="modal">
+    <h2>Proキーを入力</h2>
+    <p style="color:#888; font-size:12px; margin-bottom:16px;">決済完了後に表示されたProキーを貼り付けてください</p>
+    <input type="text" id="proKeyInput" placeholder="cus_xxxxxxxxxxxx">
+    <div class="modal-btns">
+      <button id="proCancel" onclick="closeProModal()">閉じる</button>
+      <button id="proRemove" onclick="removeProKey()">解除</button>
+      <button id="proSave" onclick="saveProKey()">保存</button>
+    </div>
+    <button id="manageSubBtn" onclick="openPortal()" style="display:none; margin-top:12px; width:100%; background:none; border:1px solid #555; color:#888; padding:8px; border-radius:8px; cursor:pointer; font-size:12px;">サブスク管理（解約・カード変更）</button>
+  </div>
 </div>
 
 <div id="resultArea">
   <div id="resultText"></div>
   <div class="btn-row">
+    <button id="btnUndo" style="display:none; background:#f39c12; color:#fff; border-radius:8px; padding:10px 16px; font-size:14px; border:none;" ontouchend="toggleOriginal(); event.preventDefault();" onclick="toggleOriginal()">元の文章に戻す</button>
     <button id="btnCopy" ontouchend="copyResult(); event.preventDefault();" onclick="copyResult()">コピー</button>
     <button id="btnClear" ontouchend="clearResult(); event.preventDefault();" onclick="clearResult()">クリア</button>
   </div>
@@ -166,6 +217,7 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
 <div style="margin-top:40px; padding-top:16px; border-top:1px solid #333; text-align:center; width:100%; max-width:400px;">
   <a href="/terms.html" style="color:#666; font-size:11px; text-decoration:none; margin:0 10px;">利用規約</a>
   <a href="/privacy.html" style="color:#666; font-size:11px; text-decoration:none; margin:0 10px;">プライバシーポリシー</a>
+  <a href="/tokushoho.html" style="color:#666; font-size:11px; text-decoration:none; margin:0 10px;">特定商取引法</a>
   <p style="color:#444; font-size:10px; margin-top:8px;">&copy; 2026 SpeakNote</p>
 </div>
 </div><!-- end mainApp -->
@@ -222,8 +274,36 @@ let rec = null;
 let isListening = false;
 let accumulated = '';
 let history = JSON.parse(localStorage.getItem('speaknote_history') || '[]');
+let proKey = localStorage.getItem('speaknote_pro_key') || '';
+
+// URLパラメータからProキーを自動設定（テスター向け簡単設定）
+// 使い方: https://web-five-alpha-24.vercel.app/?key=speaknote-vip-001-xxxxx
+(function autoSetKeyFromUrl() {
+  try {
+    const urlKey = new URLSearchParams(window.location.search).get('key');
+    if (urlKey) {
+      proKey = urlKey.trim();
+      localStorage.setItem('speaknote_pro_key', proKey);
+      // URLからkeyパラメータを削除（画面をクリーンに）
+      const url = new URL(window.location.href);
+      url.searchParams.delete('key');
+      window.history.replaceState({}, '', url.toString());
+      // 設定完了をユーザーに通知
+      setTimeout(() => {
+        if (typeof showToast === 'function') showToast('Pro設定完了！');
+        else alert('Pro設定が完了しました！');
+      }, 500);
+    }
+  } catch (e) {}
+})();
+
+// Whisper用: MediaRecorder
+let mediaRecorder = null;
+let audioChunks = [];
+let mediaStream = null;
 
 renderHistory();
+updateProUI();
 
 // --- Audio feedback ---
 let audioCtx = null;
@@ -249,6 +329,13 @@ function toggleRecord() {
 
 // --- Speech Recognition ---
 function startListening() {
+  // Proユーザー: Whisper API（MediaRecorder）を使用
+  if (proKey) {
+    startWhisperRecording();
+    return;
+  }
+
+  // 無料ユーザー: ブラウザSpeechRecognition
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
     statusEl.textContent = 'このブラウザは音声認識に対応していません。Chromeをお使いください。';
@@ -260,7 +347,6 @@ function startListening() {
   accumulated = '';
   rec = new SR();
   rec.lang = 'ja-JP';
-  // Safari doesn't support continuous well, so use shorter sessions with auto-restart
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
   rec.continuous = !isSafari;
   rec.interimResults = true;
@@ -302,13 +388,112 @@ function startListening() {
   }
 }
 
+// --- Whisper録音（Pro専用） ---
+async function startWhisperRecording() {
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+
+    // WebM優先、非対応ならMP4
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : 'audio/mp4';
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.start(1000); // 1秒ごとにチャンク
+    isListening = true;
+    mic.className = 'listening';
+    statusEl.textContent = '録音中(Whisper)... もう一度タップで完了';
+    previewEl.textContent = '🎤 高品質録音中...';
+    playStart();
+  } catch(e) {
+    statusEl.textContent = 'マイクの許可が必要です: ' + e.message;
+  }
+}
+
 async function stopAndSend() {
   isListening = false;
+  playStop();
+
+  // Whisper録音中の場合
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mic.className = 'processing';
+    statusEl.textContent = 'Whisper文字起こし中...';
+    previewEl.textContent = '';
+
+    mediaRecorder.onstop = async () => {
+      // マイクストリーム解放
+      if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+
+      if (audioChunks.length === 0) {
+        mic.className = 'idle';
+        statusEl.textContent = 'テキストなし。もう一度お試しください。';
+        setTimeout(() => { statusEl.textContent = 'マイクをタップして録音開始'; }, 2000);
+        return;
+      }
+
+      const mimeType = mediaRecorder.mimeType;
+      const blob = new Blob(audioChunks, { type: mimeType });
+      audioChunks = [];
+      mediaRecorder = null;
+
+      try {
+        // Blob → base64
+        const base64 = await blobToBase64(blob);
+        const format = mimeType.includes('mp4') ? 'mp4' : 'webm';
+
+        // Whisper API呼び出し
+        const res = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': proKey },
+          body: JSON.stringify({ audio: base64, format }),
+        });
+        const data = await res.json();
+        const text = data.text || '';
+
+        if (!text.trim()) {
+          mic.className = 'idle';
+          statusEl.textContent = 'テキストなし。もう一度お試しください。';
+          setTimeout(() => { statusEl.textContent = 'マイクをタップして録音開始'; }, 2000);
+          return;
+        }
+
+        // AI整形
+        if (chkAI.checked) {
+          statusEl.textContent = 'AI整形中...';
+          try {
+            const cleanRes = await fetch('/api/clean', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-api-key': proKey },
+              body: JSON.stringify({ text }),
+            });
+            const cleanData = await cleanRes.json();
+            showResult(cleanData.cleaned || text, text);
+          } catch(e) {
+            showResult(text);
+          }
+        } else {
+          showResult(text);
+        }
+      } catch(e) {
+        mic.className = 'idle';
+        statusEl.textContent = 'Whisperエラー: ' + e.message;
+        setTimeout(() => { statusEl.textContent = 'マイクをタップして録音開始'; }, 3000);
+      }
+    };
+
+    mediaRecorder.stop();
+    return;
+  }
+
+  // ブラウザSpeechRecognitionの場合
   const text = accumulated;
   accumulated = '';
 
   if (rec) { rec.onend = null; try { rec.stop(); } catch(e) {} rec = null; }
-  playStop();
   previewEl.textContent = '';
 
   if (!text || !text.trim()) {
@@ -323,13 +508,15 @@ async function stopAndSend() {
     mic.className = 'processing';
     statusEl.textContent = 'AI整形中...';
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (proKey) headers['x-api-key'] = proKey;
       const res = await fetch('/api/clean', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ text }),
       });
       const data = await res.json();
-      showResult(data.cleaned || text);
+      showResult(data.cleaned || text, text);
     } catch(e) {
       showResult(text);
     }
@@ -338,11 +525,36 @@ async function stopAndSend() {
   }
 }
 
-function showResult(text) {
+// base64変換ユーティリティ
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = reader.result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+let originalText = ''; // 整形前のテキスト保持
+let isShowingOriginal = false;
+
+function showResult(text, rawText) {
   mic.className = 'idle';
   statusEl.textContent = 'マイクをタップして録音開始';
   resultText.textContent = text;
+  originalText = rawText || '';
+  isShowingOriginal = false;
   resultArea.style.display = 'flex'; resultArea.classList.add('show');
+
+  // 元に戻すボタンの表示制御
+  const undoBtn = document.getElementById('btnUndo');
+  if (undoBtn) {
+    undoBtn.style.display = (originalText && originalText !== text) ? 'inline-block' : 'none';
+    undoBtn.textContent = '元の文章に戻す';
+  }
 
   // Add to history
   history.unshift({ text, time: Date.now() });
@@ -371,13 +583,34 @@ async function copyResult() {
   }
 }
 
+function toggleOriginal() {
+  const undoBtn = document.getElementById('btnUndo');
+  if (isShowingOriginal) {
+    // 整形後に戻す
+    const cleanedText = undoBtn.dataset.cleaned;
+    resultText.textContent = cleanedText;
+    undoBtn.textContent = '元の文章に戻す';
+    isShowingOriginal = false;
+  } else {
+    // 元の文章を表示
+    undoBtn.dataset.cleaned = resultText.textContent;
+    resultText.textContent = originalText;
+    undoBtn.textContent = '整形した文章に戻す';
+    isShowingOriginal = true;
+  }
+}
+
 function clearResult() {
   resultArea.style.display = 'none';
   resultArea.classList.remove('show');
   resultText.textContent = '';
+  originalText = '';
+  isShowingOriginal = false;
 }
 
-function showToast() {
+function showToast(msg) {
+  if (msg) toast.textContent = msg;
+  else toast.textContent = 'コピーしました';
   toast.className = 'show';
   setTimeout(() => { toast.className = ''; }, 1500);
 }
@@ -402,6 +635,70 @@ function useHistory(idx) {
     resultText.textContent = item.text;
     resultArea.style.display = 'flex'; resultArea.classList.add('show');
   }
+}
+
+// --- Pro Key ---
+function updateProUI() {
+  const btn = document.getElementById('proBtn');
+  const plan = document.getElementById('proPlan');
+  if (proKey) {
+    btn.className = 'active';
+    btn.textContent = 'Pro ✓';
+    plan.textContent = 'Proプラン有効';
+    plan.className = 'pro';
+  } else {
+    btn.className = '';
+    btn.textContent = 'Pro';
+    plan.textContent = '';
+    plan.className = '';
+  }
+}
+
+function openProModal() {
+  document.getElementById('proKeyInput').value = proKey;
+  document.getElementById('manageSubBtn').style.display = proKey ? 'block' : 'none';
+  document.getElementById('proModal').classList.add('show');
+}
+
+async function openPortal() {
+  if (!proKey) return;
+  try {
+    const res = await fetch('/api/portal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': proKey },
+    });
+    const data = await res.json();
+    if (data.url) {
+      window.open(data.url, '_blank');
+    } else {
+      showToast('ポータルを開けませんでした');
+    }
+  } catch (e) {
+    showToast('通信エラー');
+  }
+}
+
+function closeProModal() {
+  document.getElementById('proModal').classList.remove('show');
+}
+
+function saveProKey() {
+  const key = document.getElementById('proKeyInput').value.trim();
+  if (!key) return;
+  proKey = key;
+  localStorage.setItem('speaknote_pro_key', proKey);
+  updateProUI();
+  closeProModal();
+  showToast('Proキーを保存しました');
+}
+
+function removeProKey() {
+  proKey = '';
+  localStorage.removeItem('speaknote_pro_key');
+  document.getElementById('proKeyInput').value = '';
+  updateProUI();
+  closeProModal();
+  showToast('Proキーを解除しました');
 }
 
 // --- Service Worker (PWA) ---

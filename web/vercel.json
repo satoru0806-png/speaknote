@@ -5,7 +5,10 @@
     { "source": "/api/clean", "destination": "/api/clean" },
     { "source": "/api/chat", "destination": "/api/chat" },
     { "source": "/api/create-checkout", "destination": "/api/create-checkout" },
-    { "source": "/api/webhook", "destination": "/api/webhook" }
+    { "source": "/api/webhook", "destination": "/api/webhook" },
+    { "source": "/api/transcribe", "destination": "/api/transcribe" },
+    { "source": "/api/portal", "destination": "/api/stripe/portal" },
+    { "source": "/api/generate-key", "destination": "/api/generate-key" }
   ],
   "headers": [
     {

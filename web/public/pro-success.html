@@ -6,102 +6,55 @@
   <title>アップグレード完了 | SpeakNote</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
-      background: #1a1a2e;
-      color: #e0e0e0;
+      background: #1a1a2e; color: #e0e0e0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
     }
-
     .card {
-      background: #16213e;
-      border: 1px solid #0f3460;
-      border-radius: 16px;
-      padding: 48px 40px;
-      max-width: 480px;
-      width: 100%;
-      text-align: center;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      background: #16213e; border: 1px solid #0f3460; border-radius: 16px;
+      padding: 48px 40px; max-width: 520px; width: 100%; text-align: center;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     }
-
     .icon {
-      width: 72px;
-      height: 72px;
-      background: linear-gradient(135deg, #667eea, #764ba2);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin: 0 auto 28px;
-      font-size: 32px;
+      width: 72px; height: 72px; background: linear-gradient(135deg, #667eea, #764ba2);
+      border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 28px; font-size: 32px; color: white;
     }
-
-    h1 {
-      font-size: 1.5rem;
-      font-weight: 700;
-      color: #ffffff;
-      line-height: 1.4;
-      margin-bottom: 16px;
-    }
-
-    p {
-      color: #9ca3af;
-      font-size: 0.95rem;
-      line-height: 1.6;
-      margin-bottom: 32px;
-    }
-
+    h1 { font-size: 1.5rem; font-weight: 700; color: #fff; line-height: 1.4; margin-bottom: 16px; }
+    p { color: #9ca3af; font-size: 0.95rem; line-height: 1.6; margin-bottom: 24px; }
     .features {
-      background: #0f3460;
-      border-radius: 10px;
-      padding: 20px;
-      margin-bottom: 32px;
-      text-align: left;
+      background: #0f3460; border-radius: 10px; padding: 20px; margin-bottom: 24px; text-align: left;
     }
-
-    .features p {
-      margin-bottom: 0;
-      font-size: 0.875rem;
-    }
-
     .feature-item {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 6px 0;
-      color: #c4b5fd;
-      font-size: 0.875rem;
+      display: flex; align-items: center; gap: 10px; padding: 6px 0; color: #c4b5fd; font-size: 0.875rem;
     }
-
-    .feature-item::before {
-      content: '';
-      width: 8px;
-      height: 8px;
-      background: #667eea;
-      border-radius: 50%;
-      flex-shrink: 0;
+    .feature-item::before { content: ''; width: 8px; height: 8px; background: #667eea; border-radius: 50%; flex-shrink: 0; }
+    .api-key-box {
+      background: #0a0a1a; border: 2px solid #667eea; border-radius: 12px;
+      padding: 20px; margin-bottom: 24px; text-align: left;
     }
-
+    .api-key-box label { color: #667eea; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+    .api-key-box .key {
+      font-family: 'Courier New', monospace; font-size: 0.85rem; color: #2ed573;
+      background: #111; padding: 12px; border-radius: 8px; margin-top: 8px;
+      word-break: break-all; cursor: pointer; position: relative;
+    }
+    .api-key-box .key:hover { background: #1a1a2e; }
+    .api-key-box .hint { color: #666; font-size: 0.75rem; margin-top: 8px; }
+    .copy-msg { color: #2ed573; font-size: 0.85rem; margin-top: 8px; display: none; }
+    .steps { background: #0f3460; border-radius: 10px; padding: 20px; margin-bottom: 24px; text-align: left; }
+    .steps h3 { color: #fff; font-size: 0.95rem; margin-bottom: 12px; }
+    .step { color: #9ca3af; font-size: 0.85rem; padding: 4px 0; }
+    .step strong { color: #c4b5fd; }
     .btn {
-      display: inline-block;
-      background: linear-gradient(135deg, #667eea, #764ba2);
-      color: #ffffff;
-      text-decoration: none;
-      padding: 14px 32px;
-      border-radius: 10px;
-      font-size: 1rem;
-      font-weight: 600;
-      transition: opacity 0.2s;
-      cursor: pointer;
-      border: none;
+      display: inline-block; background: linear-gradient(135deg, #667eea, #764ba2);
+      color: #fff; text-decoration: none; padding: 14px 32px; border-radius: 10px;
+      font-size: 1rem; font-weight: 600; cursor: pointer; border: none;
     }
-
     .btn:hover { opacity: 0.85; }
+    .loading { color: #667eea; }
+    .error { color: #ff4757; }
   </style>
 </head>
 <body>
@@ -112,11 +65,98 @@
 
     <div class="features">
       <div class="feature-item">AI音声整形・無制限</div>
-      <div class="feature-item">高精度テキスト変換</div>
+      <div class="feature-item">全プラットフォーム利用可</div>
       <div class="feature-item">優先サポート</div>
+    </div>
+
+    <div class="api-key-box" id="keyBox">
+      <label>あなたのProキー</label>
+      <div class="key" id="apiKey" onclick="copyKey()">
+        <span class="loading" id="keyLoading">取得中...</span>
+      </div>
+      <div class="hint">タップでコピー。このキーをアプリの設定に貼り付けてください。</div>
+      <div class="copy-msg" id="copyMsg">コピーしました！</div>
+      <button id="retryBtn" onclick="retryFetchKey()" style="display:none; margin-top:12px; background:#667eea; color:#fff; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; font-size:0.85rem;">もう一度取得する</button>
+    </div>
+
+    <div class="steps">
+      <h3>設定方法</h3>
+      <div class="step"><strong>1.</strong> 上のProキーをコピー</div>
+      <div class="step"><strong>2.</strong> SpeakNoteアプリを開く</div>
+      <div class="step"><strong>3.</strong> 設定 → Proキーを貼り付け</div>
+      <div class="step"><strong>4.</strong> AI整形が無制限に！</div>
     </div>
 
     <a href="/" class="btn">SpeakNoteに戻る</a>
   </div>
+
+<script>
+async function fetchKey() {
+  const params = new URLSearchParams(window.location.search);
+  const sessionId = params.get('session_id');
+  if (!sessionId) {
+    document.getElementById('apiKey').innerHTML = '<span class="error">セッションIDがありません</span>';
+    return;
+  }
+  try {
+    const res = await fetch('/api/generate-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    const data = await res.json();
+    if (data.apiKey) {
+      document.getElementById('apiKey').textContent = data.apiKey;
+    } else {
+      document.getElementById('apiKey').innerHTML = '<span class="error">' + (data.error || 'エラー') + '</span>';
+      document.getElementById('retryBtn').style.display = 'inline-block';
+    }
+  } catch (e) {
+    document.getElementById('apiKey').innerHTML = '<span class="error">取得に失敗しました</span>';
+    document.getElementById('retryBtn').style.display = 'inline-block';
+  }
+}
+
+function copyKey() {
+  const key = document.getElementById('apiKey').textContent;
+  if (!key || key.includes('取得中') || key.includes('エラー') || key.includes('失敗')) return;
+
+  const showCopied = () => {
+    const msg = document.getElementById('copyMsg');
+    msg.style.display = 'block';
+    setTimeout(() => msg.style.display = 'none', 2000);
+  };
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(key).then(showCopied).catch(() => {
+      fallbackCopy(key);
+      showCopied();
+    });
+  } else {
+    fallbackCopy(key);
+    showCopied();
+  }
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+}
+
+function retryFetchKey() {
+  document.getElementById('apiKey').innerHTML = '<span class="loading">再取得中...</span>';
+  document.getElementById('retryBtn').style.display = 'none';
+  fetchKey();
+}
+
+fetchKey();
+</script>
 </body>
 </html>
