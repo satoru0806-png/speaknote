@@ -106,8 +106,15 @@ export default async function handler(req, res) {
     res.setHeader('X-Plan', 'pro');
   }
 
+  // 名前リスト取得（フロントから送信）
+  const names = Array.isArray(req.body?.names) ? req.body.names.slice(0, 50) : [];
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'API key not configured' });
+
+  const namesSection = names.length > 0
+    ? `\n\n【優先人名リスト】\n以下の人名が出現する可能性が高いです。音声認識の誤変換と思われる場合、これらの名前を優先的に使用してください:\n${names.join('、')}`
+    : '';
 
   const systemPrompt = `あなたの仕事は、入力テキストの誤字脱字を整えて、人に見せてもおかしくないような文章にすることです。
 
@@ -139,7 +146,7 @@ export default async function handler(req, res) {
 - 長すぎる一文は適切に分割する
 - 段落が長い場合は改行で区切る
 - 意味は絶対に変えない
-- 整形後テキストのみ出力`;
+- 整形後テキストのみ出力${namesSection}`;
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {

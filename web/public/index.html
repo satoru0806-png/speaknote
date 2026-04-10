@@ -133,6 +133,42 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
 }
 #proPlan.pro { color: #2ed573; }
 
+/* Dictionary modal */
+#dictModal {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  z-index: 100; align-items: center; justify-content: center;
+}
+#dictModal.show { display: flex; }
+#dictModal .modal {
+  background: #16213e; border-radius: 16px; padding: 24px 20px;
+  max-width: 380px; width: 92%; max-height: 80vh; overflow-y: auto;
+}
+#dictModal h2 { font-size: 16px; margin-bottom: 6px; }
+#dictModal .dict-desc { font-size: 11px; color: #888; margin-bottom: 14px; }
+.dict-add { display: flex; gap: 6px; margin-bottom: 14px; }
+.dict-add input {
+  flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #444;
+  background: #0a0a1a; color: #eee; font-size: 13px;
+}
+.dict-add button {
+  padding: 10px 14px; border-radius: 8px; border: none;
+  background: #667eea; color: #fff; font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+#dictList { display: flex; flex-direction: column; gap: 4px; }
+.dict-item {
+  display: flex; justify-content: space-between; align-items: center;
+  background: #0f1b35; border-radius: 8px; padding: 8px 10px; font-size: 13px;
+}
+.dict-item span { color: #aaa; }
+.dict-item .arrow { color: #667eea; margin: 0 6px; }
+.dict-item button {
+  background: none; border: none; color: #e74c3c; cursor: pointer; font-size: 16px; padding: 2px 6px;
+}
+#dictClose {
+  margin-top: 14px; width: 100%; padding: 10px; border-radius: 8px;
+  border: 1px solid #444; background: none; color: #aaa; font-size: 13px; cursor: pointer;
+}
+
 /* Toast */
 #toast {
   position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
@@ -179,6 +215,7 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
     AI整形
     <label class="sw"><input type="checkbox" id="chkAI" checked><span class="track"></span></label>
   </div>
+  <button id="dictBtn" onclick="openDictModal()" style="background:none; border:1px solid #555; color:#888; font-size:11px; padding:4px 10px; border-radius:12px; cursor:pointer;">辞書</button>
   <button id="proBtn" onclick="openProModal()">Pro</button>
 </div>
 <div id="proPlan"></div>
@@ -195,6 +232,21 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
       <button id="proSave" onclick="saveProKey()">保存</button>
     </div>
     <button id="manageSubBtn" onclick="openPortal()" style="display:none; margin-top:12px; width:100%; background:none; border:1px solid #555; color:#888; padding:8px; border-radius:8px; cursor:pointer; font-size:12px;">サブスク管理（解約・カード変更）</button>
+  </div>
+</div>
+
+<!-- Dictionary modal -->
+<div id="dictModal">
+  <div class="modal">
+    <h2>辞書（名前登録）</h2>
+    <p class="dict-desc">よく使う人名を登録すると、音声認識で正しく変換されます</p>
+    <div class="dict-add">
+      <input type="text" id="dictFrom" placeholder="読み（例: たなか）">
+      <input type="text" id="dictTo" placeholder="表記（例: 田中）">
+      <button onclick="addDictEntry()">追加</button>
+    </div>
+    <div id="dictList"></div>
+    <button id="dictClose" onclick="closeDictModal()">閉じる</button>
   </div>
 </div>
 
@@ -275,6 +327,53 @@ let isListening = false;
 let accumulated = '';
 let history = JSON.parse(localStorage.getItem('speaknote_history') || '[]');
 let proKey = localStorage.getItem('speaknote_pro_key') || '';
+let userDict = JSON.parse(localStorage.getItem('speaknote_dict') || '[]');
+
+// --- Dictionary ---
+function openDictModal() {
+  renderDictList();
+  document.getElementById('dictModal').classList.add('show');
+}
+function closeDictModal() {
+  document.getElementById('dictModal').classList.remove('show');
+}
+function addDictEntry() {
+  const from = document.getElementById('dictFrom').value.trim();
+  const to = document.getElementById('dictTo').value.trim();
+  if (!from || !to) return;
+  userDict = userDict.filter(e => e.from !== from);
+  userDict.push({ from, to });
+  localStorage.setItem('speaknote_dict', JSON.stringify(userDict));
+  document.getElementById('dictFrom').value = '';
+  document.getElementById('dictTo').value = '';
+  renderDictList();
+  showToast('辞書に追加しました');
+}
+function removeDictEntry(idx) {
+  userDict.splice(idx, 1);
+  localStorage.setItem('speaknote_dict', JSON.stringify(userDict));
+  renderDictList();
+}
+function renderDictList() {
+  const list = document.getElementById('dictList');
+  if (userDict.length === 0) {
+    list.innerHTML = '<div style="color:#555; font-size:12px; padding:8px;">辞書は空です</div>';
+    return;
+  }
+  list.innerHTML = userDict.map((e, i) =>
+    `<div class="dict-item"><span>${e.from}<span class="arrow">→</span>${e.to}</span><button onclick="removeDictEntry(${i})">✕</button></div>`
+  ).join('');
+}
+function applyDict(text) {
+  for (const entry of userDict) {
+    text = text.split(entry.from).join(entry.to);
+  }
+  return text;
+}
+function getDictNames() {
+  if (userDict.length === 0) return null;
+  return userDict.map(e => e.to);
+}
 
 // URLパラメータからProキーを自動設定（テスター向け簡単設定）
 // 使い方: https://web-five-alpha-24.vercel.app/?key=speaknote-vip-001-xxxxx
@@ -461,22 +560,27 @@ async function stopAndSend() {
           return;
         }
 
+        // 辞書置換（方法B）
+        const dictApplied = applyDict(text);
         // AI整形
         if (chkAI.checked) {
           statusEl.textContent = 'AI整形中...';
           try {
+            const body = { text: dictApplied };
+            const names = getDictNames();
+            if (names) body.names = names;
             const cleanRes = await fetch('/api/clean', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'x-api-key': proKey },
-              body: JSON.stringify({ text }),
+              body: JSON.stringify(body),
             });
             const cleanData = await cleanRes.json();
-            showResult(cleanData.cleaned || text, text);
+            showResult(cleanData.cleaned || dictApplied, text);
           } catch(e) {
-            showResult(text);
+            showResult(dictApplied, text);
           }
         } else {
-          showResult(text);
+          showResult(dictApplied, text);
         }
       } catch(e) {
         mic.className = 'idle';
@@ -503,6 +607,8 @@ async function stopAndSend() {
     return;
   }
 
+  // 辞書置換（方法B）
+  const dictApplied = applyDict(text);
   // AI cleanup
   if (chkAI.checked) {
     mic.className = 'processing';
@@ -510,18 +616,21 @@ async function stopAndSend() {
     try {
       const headers = { 'Content-Type': 'application/json' };
       if (proKey) headers['x-api-key'] = proKey;
+      const body = { text: dictApplied };
+      const names = getDictNames();
+      if (names) body.names = names;
       const res = await fetch('/api/clean', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
-      showResult(data.cleaned || text, text);
+      showResult(data.cleaned || dictApplied, text);
     } catch(e) {
-      showResult(text);
+      showResult(dictApplied, text);
     }
   } else {
-    showResult(text);
+    showResult(dictApplied, text);
   }
 }
 
