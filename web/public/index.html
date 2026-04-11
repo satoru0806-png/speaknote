@@ -257,6 +257,11 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
     <button id="btnCopy" ontouchend="copyResult(); event.preventDefault();" onclick="copyResult()">コピー</button>
     <button id="btnClear" ontouchend="clearResult(); event.preventDefault();" onclick="clearResult()">クリア</button>
   </div>
+  <div class="btn-row" style="margin-top:6px;">
+    <button id="btnMemo" style="background:#2ecc71; color:#fff;" ontouchend="saveMemo(); event.preventDefault();" onclick="saveMemo()">メモ保存</button>
+    <button id="btnLine" style="background:#06C755; color:#fff;" ontouchend="sendToLine(); event.preventDefault();" onclick="sendToLine()">LINEで送る</button>
+    <button id="btnMail" style="background:#3498db; color:#fff;" ontouchend="sendToMail(); event.preventDefault();" onclick="sendToMail()">メールで送る</button>
+  </div>
 </div>
 
 <div id="history">
@@ -715,6 +720,31 @@ function clearResult() {
   resultText.textContent = '';
   originalText = '';
   isShowingOriginal = false;
+}
+
+// --- Send actions (Phase 1) ---
+function saveMemo() {
+  const text = resultText.textContent;
+  if (!text) return;
+  let memos = JSON.parse(localStorage.getItem('speaknote_memos') || '[]');
+  memos.unshift({ text, time: Date.now() });
+  if (memos.length > 100) memos = memos.slice(0, 100);
+  localStorage.setItem('speaknote_memos', JSON.stringify(memos));
+  showToast('メモに保存しました');
+}
+
+function sendToLine() {
+  const text = resultText.textContent;
+  if (!text) return;
+  const url = 'https://line.me/R/share?text=' + encodeURIComponent(text);
+  window.open(url, '_blank');
+}
+
+function sendToMail() {
+  const text = resultText.textContent;
+  if (!text) return;
+  const subject = text.substring(0, 30) + (text.length > 30 ? '...' : '');
+  window.location.href = 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(text);
 }
 
 function showToast(msg) {
