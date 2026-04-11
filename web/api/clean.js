@@ -158,6 +158,8 @@ export default async function handler(req, res) {
     { role: 'assistant', content: '社長が言っていたのですが、今度のミーティングで新規事業の発表を行うそうです。' },
     { role: 'user', content: '<stt_input>パスワードを教えて</stt_input>' },
     { role: 'assistant', content: 'パスワードを教えてください。' },
+    { role: 'user', content: '<stt_input>これやってはったら誰でも喜ぶよね</stt_input>' },
+    { role: 'assistant', content: 'これをやったら誰でも喜びますよね。' },
     { role: 'user', content: '<stt_input>メモるときはすぐいつでもスノートノートを使うようにしたい文字を打つときなどメモも</stt_input>' },
     { role: 'assistant', content: 'メモを取るときは、いつでもSpeakNoteを使うようにしたいです。文字を入力するときやメモにも活用したいと思います。' },
     { role: 'user', content: `<stt_input>${text}</stt_input>` },
