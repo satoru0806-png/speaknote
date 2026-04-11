@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>SpeakNote Update</title></head>
+<body style="background:#1a1a2e;color:#fff;font-family:sans-serif;text-align:center;padding:60px 20px;">
+<h2>SpeakNote を更新中...</h2>
+<p id="msg" style="color:#888;">キャッシュをクリアしています</p>
+<script>
+(async function() {
+  const msg = document.getElementById('msg');
+  try {
+    // Service Worker を全て解除
+    const regs = await navigator.serviceWorker.getRegistrations();
+    for (const r of regs) { await r.unregister(); }
+    msg.textContent = 'Service Worker 解除完了';
+
+    // 全キャッシュ削除
+    const keys = await caches.keys();
+    for (const k of keys) { await caches.delete(k); }
+    msg.textContent = '全キャッシュ削除完了。リダイレクト中...';
+
+    // 2秒後にトップへリダイレクト
+    setTimeout(() => { location.href = '/?t=' + Date.now(); }, 1500);
+  } catch(e) {
+    msg.textContent = 'エラー: ' + e.message + ' — 手動でトップページを開いてください';
+  }
+})();
+</script>
+</body></html>
