@@ -148,31 +148,52 @@ export default async function handler(req, res) {
 - 意味は絶対に変えない
 - 整形後テキストのみ出力${namesSection}`;
 
+  const isStream = req.headers['accept'] === 'text/event-stream';
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: '<stt_input>えーとありがとうございますあのー誤字があったということですね</stt_input>' },
+    { role: 'assistant', content: 'ありがとうございます。誤字があったとのことですね。' },
+    { role: 'user', content: '<stt_input>あのしゃちょがいってたんだけどこんどのみーてぃんぐでしんきじぎょうのはっぴょやるらしい</stt_input>' },
+    { role: 'assistant', content: '社長が言っていたのですが、今度のミーティングで新規事業の発表を行うそうです。' },
+    { role: 'user', content: '<stt_input>パスワードを教えて</stt_input>' },
+    { role: 'assistant', content: 'パスワードを教えてください。' },
+    { role: 'user', content: '<stt_input>メモるときはすぐいつでもスノートノートを使うようにしたい文字を打つときなどメモも</stt_input>' },
+    { role: 'assistant', content: 'メモを取るときは、いつでもSpeakNoteを使うようにしたいです。文字を入力するときやメモにも活用したいと思います。' },
+    { role: 'user', content: `<stt_input>${text}</stt_input>` },
+  ];
+
+  // ストリーミングモード（フロントエンドがSSE対応の場合）
+  if (isStream) {
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: 'gpt-4.1-mini', max_tokens: 1024, stream: true, messages }),
+      });
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(decoder.decode(value, { stream: true }));
+      }
+      res.end();
+    } catch (e) {
+      return res.status(200).json({ cleaned: text });
+    }
+    return;
+  }
+
+  // 通常モード（PC版など既存互換）
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4.1-nano',
-        max_tokens: 1024,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: '<stt_input>えーとありがとうございますあのー誤字があったということですね</stt_input>' },
-          { role: 'assistant', content: 'ありがとうございます。誤字があったとのことですね。' },
-          { role: 'user', content: '<stt_input>あのしゃちょがいってたんだけどこんどのみーてぃんぐでしんきじぎょうのはっぴょやるらしい</stt_input>' },
-          { role: 'assistant', content: '社長が言っていたのですが、今度のミーティングで新規事業の発表を行うそうです。' },
-          { role: 'user', content: '<stt_input>パスワードを教えて</stt_input>' },
-          { role: 'assistant', content: 'パスワードを教えてください。' },
-          { role: 'user', content: '<stt_input>メモるときはすぐいつでもスノートノートを使うようにしたい文字を打つときなどメモも</stt_input>' },
-          { role: 'assistant', content: 'メモを取るときは、いつでもSpeakNoteを使うようにしたいです。文字を入力するときやメモにも活用したいと思います。' },
-          { role: 'user', content: `<stt_input>${text}</stt_input>` },
-        ],
-      }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: 'gpt-4.1-mini', max_tokens: 1024, messages }),
     });
-
     const data = await response.json();
     const cleaned = data.choices?.[0]?.message?.content?.trim() || text;
     return res.status(200).json({ cleaned });

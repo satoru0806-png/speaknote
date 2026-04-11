@@ -409,6 +409,56 @@ let mediaStream = null;
 renderHistory();
 updateProUI();
 
+// --- Streaming AI clean ---
+async function streamClean(inputText, rawText, apiKey) {
+  const body = { text: inputText };
+  const names = getDictNames();
+  if (names) body.names = names;
+  const headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' };
+  if (apiKey) headers['x-api-key'] = apiKey;
+
+  // 結果表示を先に出す（空で）
+  resultText.textContent = '';
+  originalText = rawText || '';
+  isShowingOriginal = false;
+  resultArea.style.display = 'flex'; resultArea.classList.add('show');
+  mic.className = 'idle';
+  statusEl.textContent = '';
+
+  try {
+    const res = await fetch('/api/clean', { method: 'POST', headers, body: JSON.stringify(body) });
+    if (!res.body || !res.headers.get('content-type')?.includes('text/event-stream')) {
+      // ストリーミング非対応 → 通常処理
+      const data = await res.json();
+      showResult(data.cleaned || inputText, rawText);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let full = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split('\n');
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6);
+        if (data === '[DONE]') break;
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed.choices?.[0]?.delta?.content || '';
+          if (delta) { full += delta; resultText.textContent = full; }
+        } catch {}
+      }
+    }
+    if (!full.trim()) full = inputText;
+    showResult(full.trim(), rawText);
+  } catch(e) {
+    showResult(inputText, rawText);
+  }
+}
+
 // --- Audio feedback ---
 let audioCtx = null;
 function playTone(freq, dur) {
@@ -567,23 +617,10 @@ async function stopAndSend() {
 
         // 辞書置換（方法B）
         const dictApplied = applyDict(text);
-        // AI整形
+        // AI整形（ストリーミング）
         if (chkAI.checked) {
           statusEl.textContent = 'AI整形中...';
-          try {
-            const body = { text: dictApplied };
-            const names = getDictNames();
-            if (names) body.names = names;
-            const cleanRes = await fetch('/api/clean', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-api-key': proKey },
-              body: JSON.stringify(body),
-            });
-            const cleanData = await cleanRes.json();
-            showResult(cleanData.cleaned || dictApplied, text);
-          } catch(e) {
-            showResult(dictApplied, text);
-          }
+          await streamClean(dictApplied, text, proKey);
         } else {
           showResult(dictApplied, text);
         }
@@ -614,26 +651,11 @@ async function stopAndSend() {
 
   // 辞書置換（方法B）
   const dictApplied = applyDict(text);
-  // AI cleanup
+  // AI cleanup（ストリーミング）
   if (chkAI.checked) {
     mic.className = 'processing';
     statusEl.textContent = 'AI整形中...';
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (proKey) headers['x-api-key'] = proKey;
-      const body = { text: dictApplied };
-      const names = getDictNames();
-      if (names) body.names = names;
-      const res = await fetch('/api/clean', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      showResult(data.cleaned || dictApplied, text);
-    } catch(e) {
-      showResult(dictApplied, text);
-    }
+    await streamClean(dictApplied, text, proKey);
   } else {
     showResult(dictApplied, text);
   }
