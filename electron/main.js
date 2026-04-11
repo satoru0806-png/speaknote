@@ -75,8 +75,8 @@ function elevenLabsTTS(text) {
 function cleanWithAI(rawText) {
   return new Promise((resolve) => {
     if (!rawText.trim()) { resolve(rawText); return; }
-    // 30文字以下は整形スキップ（高速化）
-    if (rawText.trim().length <= 30) { resolve(rawText); return; }
+    // 15文字以下は整形スキップ（高速化）
+    if (rawText.trim().length <= 15) { resolve(rawText); return; }
     // Vercel API経由
     const body = JSON.stringify({ text: rawText });
     const req = https.request({
