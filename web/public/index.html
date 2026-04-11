@@ -697,6 +697,9 @@ function showResult(text, rawText) {
   if (history.length > 20) history = history.slice(0, 20);
   localStorage.setItem('speaknote_history', JSON.stringify(history));
   renderHistory();
+
+  // Phase 2: 意図判断 + 読み上げ + 自動アクション
+  handleIntent(text, rawText);
 }
 
 // --- Copy ---
@@ -742,6 +745,58 @@ function clearResult() {
   resultText.textContent = '';
   originalText = '';
   isShowingOriginal = false;
+}
+
+// --- Voice (TTS) ---
+function speak(text) {
+  return new Promise((resolve) => {
+    if (!('speechSynthesis' in window)) { resolve(); return; }
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ja-JP';
+    u.rate = 1.1;
+    u.onend = resolve;
+    u.onerror = resolve;
+    window.speechSynthesis.speak(u);
+  });
+}
+
+// --- Intent Detection (Phase 2) ---
+function detectIntent(rawText) {
+  if (!rawText) return { type: 'copy', target: null, name: null };
+  const t = rawText;
+  // 送信先の名前を検出（「〇〇さんに」パターン）
+  const nameMatch = t.match(/(.{1,10}?)さんに/);
+  const name = nameMatch ? nameMatch[1] : null;
+  // 意図検出
+  if (/送って|送りたい|伝えて|連絡して|LINEして|ラインして/.test(t)) {
+    if (/メール/.test(t)) return { type: 'mail', target: 'mail', name };
+    return { type: 'line', target: 'line', name };
+  }
+  if (/メールして|メールで/.test(t)) return { type: 'mail', target: 'mail', name };
+  if (/メモ|保存|覚えて|記録/.test(t)) return { type: 'memo', target: 'memo', name: null };
+  return { type: 'copy', target: null, name };
+}
+
+// 意図に基づく自動アクション
+async function handleIntent(cleanedText, rawText) {
+  const intent = detectIntent(rawText);
+
+  if (intent.type === 'line') {
+    const who = intent.name ? intent.name + 'さん' : '相手';
+    await speak(who + 'にLINEで送ります。');
+    setTimeout(() => sendToLine(), 500);
+  } else if (intent.type === 'mail') {
+    const who = intent.name ? intent.name + 'さん' : '相手';
+    await speak(who + 'にメールで送ります。');
+    setTimeout(() => sendToMail(), 500);
+  } else if (intent.type === 'memo') {
+    saveMemo();
+    await speak('メモに保存しました。');
+  } else {
+    // 通常モード：整形結果を読み上げ
+    await speak(cleanedText);
+  }
 }
 
 // --- Send actions (Phase 1) ---
