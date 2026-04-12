@@ -409,6 +409,31 @@ let mediaStream = null;
 renderHistory();
 updateProUI();
 
+// --- Auto-record from URL param (OK Google integration) ---
+// 使い方: https://web-five-alpha-24.vercel.app/?auto=1
+// 「OK Google、SpeakNote開いて」で呼び出された時に即録音開始
+(function autoRecordFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const auto = params.get('auto');
+    if (auto === '1' || auto === 'true') {
+      // URLからautoパラメータを削除
+      const url = new URL(window.location.href);
+      url.searchParams.delete('auto');
+      window.history.replaceState({}, '', url.toString());
+      // ユーザー操作なしで音声APIを使うには一度スクロール等のジェスチャーが必要なので
+      // 即起動を試みる。iOS Safariでブロックされる場合は画面タップ案内
+      setTimeout(() => {
+        try {
+          toggleRecord();
+        } catch(e) {
+          statusEl.textContent = '画面をタップしてから話してください';
+        }
+      }, 300);
+    }
+  } catch(e) {}
+})();
+
 // --- Streaming AI clean ---
 async function streamClean(inputText, rawText, apiKey) {
   const body = { text: inputText };
