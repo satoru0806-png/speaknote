@@ -1,30 +1,23 @@
-const CACHE = 'speaknote-v9';
-const ASSETS = ['/', '/manifest.json', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png'];
-
+// SpeakNote Service Worker - Self-destruct mode
+// 過去のSWを完全に無効化し、キャッシュも全削除する
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (e) => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
+  e.waitUntil((async () => {
+    // 全キャッシュ削除
+    const keys = await caches.keys();
+    await Promise.all(keys.map(k => caches.delete(k)));
+    // 自分自身を登録解除
+    await self.registration.unregister();
+    // 全クライアントに再読み込みを指示
+    const clients = await self.clients.matchAll({ type: 'window' });
+    for (const client of clients) {
+      client.navigate(client.url);
+    }
+  })());
 });
 
-self.addEventListener('fetch', (e) => {
-  // API calls: network only
-  if (e.request.url.includes('/api/')) return;
-
-  // Network first, fallback to cache
-  e.respondWith(
-    fetch(e.request).then(res => {
-      const clone = res.clone();
-      caches.open(CACHE).then(c => c.put(e.request, clone));
-      return res;
-    }).catch(() => caches.match(e.request))
-  );
-});
+// fetchイベントは完全にネットワーク透過（キャッシュしない）
+self.addEventListener('fetch', () => {});

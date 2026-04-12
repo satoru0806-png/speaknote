@@ -1061,9 +1061,14 @@ function removeProKey() {
   showToast('Proキーを解除しました');
 }
 
-// --- Service Worker (PWA) ---
+// --- Service Worker (self-destruct mode) ---
+// 既存のSWを登録解除させてキャッシュ問題を根絶
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
+  // 既存のSWが残っていたら解除（念のため）
+  navigator.serviceWorker.getRegistrations?.().then(regs => {
+    // 何もしない：sw.js自体がactivate時にunregisterするので任せる
+  });
 }
 </script>
 </body>
