@@ -217,6 +217,7 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
   </div>
   <button id="vadBtn" onclick="toggleVAD()" style="background:none; border:1px solid #555; color:#888; font-size:11px; padding:4px 10px; border-radius:12px; cursor:pointer;">🎧ハンズフリー</button>
   <button id="dictBtn" onclick="openDictModal()" style="background:none; border:1px solid #555; color:#888; font-size:11px; padding:4px 10px; border-radius:12px; cursor:pointer;">辞書</button>
+  <button id="syncBtn" onclick="openSyncModal()" style="background:none; border:1px solid #555; color:#888; font-size:11px; padding:4px 10px; border-radius:12px; cursor:pointer;">同期</button>
   <button id="proBtn" onclick="openProModal()">Pro</button>
 </div>
 <div id="proPlan"></div>
@@ -233,6 +234,28 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
       <button id="proSave" onclick="saveProKey()">保存</button>
     </div>
     <button id="manageSubBtn" onclick="openPortal()" style="display:none; margin-top:12px; width:100%; background:none; border:1px solid #555; color:#888; padding:8px; border-radius:8px; cursor:pointer; font-size:12px;">サブスク管理（解約・カード変更）</button>
+  </div>
+</div>
+
+<!-- Sync modal -->
+<div id="syncModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center;">
+  <div style="background:#16213e; border-radius:16px; padding:24px 20px; max-width:380px; width:92%;">
+    <h2 style="font-size:16px; margin-bottom:6px;">同期（辞書・メモ・履歴）</h2>
+    <p id="syncStatus" style="font-size:11px; color:#888; margin-bottom:14px;">未ログイン</p>
+    <div id="syncLoginForm">
+      <input type="email" id="syncEmail" placeholder="メールアドレス" style="width:100%; padding:10px; border-radius:8px; border:1px solid #444; background:#0a0a1a; color:#eee; font-size:13px; margin-bottom:8px;">
+      <input type="password" id="syncPassword" placeholder="パスワード（6文字以上）" style="width:100%; padding:10px; border-radius:8px; border:1px solid #444; background:#0a0a1a; color:#eee; font-size:13px; margin-bottom:8px;">
+      <div style="display:flex; gap:6px; margin-bottom:10px;">
+        <button onclick="syncLogin()" style="flex:1; padding:10px; border-radius:8px; border:none; background:#667eea; color:#fff; font-size:13px; cursor:pointer;">ログイン</button>
+        <button onclick="syncSignup()" style="flex:1; padding:10px; border-radius:8px; border:none; background:#2ed573; color:#fff; font-size:13px; cursor:pointer;">新規登録</button>
+      </div>
+    </div>
+    <div id="syncLoggedIn" style="display:none;">
+      <button onclick="syncPull()" style="width:100%; padding:10px; border-radius:8px; border:none; background:#667eea; color:#fff; font-size:13px; cursor:pointer; margin-bottom:6px;">クラウドから取得</button>
+      <button onclick="syncPush()" style="width:100%; padding:10px; border-radius:8px; border:none; background:#2ed573; color:#fff; font-size:13px; cursor:pointer; margin-bottom:6px;">クラウドに保存</button>
+      <button onclick="syncLogout()" style="width:100%; padding:10px; border-radius:8px; border:1px solid #444; background:none; color:#e74c3c; font-size:13px; cursor:pointer; margin-bottom:6px;">ログアウト</button>
+    </div>
+    <button onclick="closeSyncModal()" style="width:100%; padding:10px; border-radius:8px; border:1px solid #444; background:none; color:#aaa; font-size:13px; cursor:pointer; margin-top:6px;">閉じる</button>
   </div>
 </div>
 
@@ -334,6 +357,143 @@ let accumulated = '';
 let history = JSON.parse(localStorage.getItem('speaknote_history') || '[]');
 let proKey = localStorage.getItem('speaknote_pro_key') || '';
 let userDict = JSON.parse(localStorage.getItem('speaknote_dict') || '[]');
+let syncToken = localStorage.getItem('speaknote_sync_token') || '';
+let syncEmail = localStorage.getItem('speaknote_sync_email') || '';
+
+// --- Sync (Cloud) ---
+function openSyncModal() {
+  updateSyncUI();
+  document.getElementById('syncModal').style.display = 'flex';
+}
+function closeSyncModal() {
+  document.getElementById('syncModal').style.display = 'none';
+}
+function updateSyncUI() {
+  const status = document.getElementById('syncStatus');
+  const loginForm = document.getElementById('syncLoginForm');
+  const loggedIn = document.getElementById('syncLoggedIn');
+  const btn = document.getElementById('syncBtn');
+  if (syncToken) {
+    status.textContent = 'ログイン中: ' + syncEmail;
+    status.style.color = '#2ed573';
+    loginForm.style.display = 'none';
+    loggedIn.style.display = 'block';
+    btn.style.borderColor = '#2ed573';
+    btn.style.color = '#2ed573';
+    btn.textContent = '同期✓';
+  } else {
+    status.textContent = '未ログイン（ログインすると全デバイスで同期されます）';
+    status.style.color = '#888';
+    loginForm.style.display = 'block';
+    loggedIn.style.display = 'none';
+    btn.style.borderColor = '#555';
+    btn.style.color = '#888';
+    btn.textContent = '同期';
+  }
+}
+
+async function syncLogin() {
+  const email = document.getElementById('syncEmail').value.trim();
+  const password = document.getElementById('syncPassword').value;
+  if (!email || !password) { showToast('メールとパスワードを入力'); return; }
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || 'ログイン失敗'); return; }
+    syncToken = data.token;
+    syncEmail = email;
+    localStorage.setItem('speaknote_sync_token', syncToken);
+    localStorage.setItem('speaknote_sync_email', syncEmail);
+    updateSyncUI();
+    showToast('ログイン成功');
+    await syncPull(); // ログイン後すぐ取得
+  } catch(e) { showToast('通信エラー'); }
+}
+
+async function syncSignup() {
+  const email = document.getElementById('syncEmail').value.trim();
+  const password = document.getElementById('syncPassword').value;
+  if (!email || !password) { showToast('メールとパスワードを入力'); return; }
+  try {
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || '登録失敗'); return; }
+    showToast('登録完了！メール確認後ログインしてください');
+  } catch(e) { showToast('通信エラー'); }
+}
+
+function syncLogout() {
+  syncToken = '';
+  syncEmail = '';
+  localStorage.removeItem('speaknote_sync_token');
+  localStorage.removeItem('speaknote_sync_email');
+  updateSyncUI();
+  showToast('ログアウトしました');
+}
+
+async function syncPull() {
+  if (!syncToken) return;
+  try {
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + syncToken },
+      body: JSON.stringify({ action: 'get' }),
+    });
+    if (res.status === 401) { syncLogout(); return; }
+    const data = await res.json();
+    // クラウドデータで上書き
+    if (Array.isArray(data.dict)) {
+      userDict = data.dict;
+      localStorage.setItem('speaknote_dict', JSON.stringify(userDict)); autoSyncPush();
+    }
+    if (Array.isArray(data.memos)) {
+      localStorage.setItem('speaknote_memos', JSON.stringify(data.memos));
+    }
+    if (Array.isArray(data.history)) {
+      history = data.history;
+      localStorage.setItem('speaknote_history', JSON.stringify(history));
+      renderHistory();
+    }
+    showToast('クラウドから取得しました');
+  } catch(e) { showToast('取得エラー'); }
+}
+
+async function syncPush() {
+  if (!syncToken) return;
+  try {
+    const payload = {
+      dict: userDict,
+      memos: JSON.parse(localStorage.getItem('speaknote_memos') || '[]'),
+      history: history,
+      settings: { aiEnabled: chkAI.checked },
+    };
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + syncToken },
+      body: JSON.stringify({ action: 'put', data: payload }),
+    });
+    if (res.status === 401) { syncLogout(); return; }
+    if (!res.ok) { showToast('保存エラー'); return; }
+    showToast('クラウドに保存しました');
+  } catch(e) { showToast('保存エラー'); }
+}
+
+// データ更新時に自動でクラウドpush（デバウンス）
+let _syncDebounce = null;
+function autoSyncPush() {
+  if (!syncToken) return;
+  if (_syncDebounce) clearTimeout(_syncDebounce);
+  _syncDebounce = setTimeout(() => syncPush(), 3000);
+}
+
 
 // --- Dictionary ---
 function openDictModal() {
@@ -349,7 +509,7 @@ function addDictEntry() {
   if (!from || !to) return;
   userDict = userDict.filter(e => e.from !== from);
   userDict.push({ from, to });
-  localStorage.setItem('speaknote_dict', JSON.stringify(userDict));
+  localStorage.setItem('speaknote_dict', JSON.stringify(userDict)); autoSyncPush();
   document.getElementById('dictFrom').value = '';
   document.getElementById('dictTo').value = '';
   renderDictList();
@@ -357,7 +517,7 @@ function addDictEntry() {
 }
 function removeDictEntry(idx) {
   userDict.splice(idx, 1);
-  localStorage.setItem('speaknote_dict', JSON.stringify(userDict));
+  localStorage.setItem('speaknote_dict', JSON.stringify(userDict)); autoSyncPush();
   renderDictList();
 }
 function renderDictList() {
@@ -409,6 +569,9 @@ let mediaStream = null;
 
 renderHistory();
 updateProUI();
+updateSyncUI();
+// ログイン済みなら起動時にクラウドから最新データを取得
+if (syncToken) { setTimeout(() => syncPull(), 500); }
 
 // --- VAD (Voice Activity Detection) - 声を検出して自動録音 ---
 let vadStream = null;
@@ -798,6 +961,7 @@ function showResult(text, rawText) {
   if (history.length > 20) history = history.slice(0, 20);
   localStorage.setItem('speaknote_history', JSON.stringify(history));
   renderHistory();
+  autoSyncPush();
 
   // Phase 2: 意図判断 + 読み上げ + 自動アクション
   handleIntent(text, rawText);
@@ -951,6 +1115,7 @@ function saveMemo() {
   memos.unshift({ text, time: Date.now() });
   if (memos.length > 100) memos = memos.slice(0, 100);
   localStorage.setItem('speaknote_memos', JSON.stringify(memos));
+  autoSyncPush();
   showToast('メモに保存しました');
 }
 
