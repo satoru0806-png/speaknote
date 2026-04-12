@@ -215,6 +215,7 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
     AI整形
     <label class="sw"><input type="checkbox" id="chkAI" checked><span class="track"></span></label>
   </div>
+  <button id="vadBtn" onclick="toggleVAD()" style="background:none; border:1px solid #555; color:#888; font-size:11px; padding:4px 10px; border-radius:12px; cursor:pointer;">🎧ハンズフリー</button>
   <button id="dictBtn" onclick="openDictModal()" style="background:none; border:1px solid #555; color:#888; font-size:11px; padding:4px 10px; border-radius:12px; cursor:pointer;">辞書</button>
   <button id="proBtn" onclick="openProModal()">Pro</button>
 </div>
@@ -408,6 +409,81 @@ let mediaStream = null;
 
 renderHistory();
 updateProUI();
+
+// --- VAD (Voice Activity Detection) - 声を検出して自動録音 ---
+let vadStream = null;
+let vadCtx = null;
+let vadAnimFrame = null;
+let vadActive = false;
+
+async function startVAD() {
+  if (vadActive) return;
+  try {
+    vadStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    vadCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = vadCtx.createMediaStreamSource(vadStream);
+    const analyser = vadCtx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    vadActive = true;
+    statusEl.textContent = '🎧 声を待機中...（話しかけてください）';
+    const THRESHOLD = 30;   // 音量閾値
+    let aboveCount = 0;
+    const check = () => {
+      if (!vadActive) return;
+      analyser.getByteFrequencyData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i];
+      const avg = sum / data.length;
+      if (avg > THRESHOLD) {
+        aboveCount++;
+        if (aboveCount > 3) { // 連続3フレーム（約50ms）超えたら録音開始
+          stopVAD();
+          toggleRecord();
+          return;
+        }
+      } else {
+        aboveCount = 0;
+      }
+      vadAnimFrame = requestAnimationFrame(check);
+    };
+    check();
+  } catch(e) {
+    statusEl.textContent = 'マイク許可が必要です';
+    vadActive = false;
+  }
+}
+
+function stopVAD() {
+  vadActive = false;
+  if (vadAnimFrame) { cancelAnimationFrame(vadAnimFrame); vadAnimFrame = null; }
+  if (vadStream) { vadStream.getTracks().forEach(t => t.stop()); vadStream = null; }
+  if (vadCtx) { try { vadCtx.close(); } catch(e) {} vadCtx = null; }
+}
+
+function toggleVAD() {
+  const btn = document.getElementById('vadBtn');
+  if (vadActive) {
+    stopVAD();
+    btn.style.borderColor = '#555';
+    btn.style.color = '#888';
+    btn.textContent = '🎧ハンズフリー';
+    statusEl.textContent = 'マイクをタップして録音開始';
+  } else {
+    btn.style.borderColor = '#2ed573';
+    btn.style.color = '#2ed573';
+    btn.textContent = '🎧ON';
+    startVAD();
+  }
+}
+
+// 処理完了後にVADが有効ならまた待機に戻す
+function resumeVADIfActive() {
+  if (document.getElementById('vadBtn').textContent === '🎧ON') {
+    setTimeout(() => startVAD(), 800);
+  }
+}
 
 // --- Auto-record from URL param (OK Google integration) ---
 // 使い方: https://web-five-alpha-24.vercel.app/?auto=1
@@ -803,18 +879,59 @@ function detectIntent(rawText) {
   return { type: 'copy', target: null, name };
 }
 
+// --- 確認音声認識（「はい」「やめて」を聞く） ---
+function listenForConfirmation() {
+  return new Promise((resolve) => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { resolve('timeout'); return; }
+    const rec = new SR();
+    rec.lang = 'ja-JP';
+    rec.continuous = false;
+    rec.interimResults = false;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try { rec.stop(); } catch(e) {}
+      resolve(result);
+    };
+    rec.onresult = (e) => {
+      const t = e.results[0]?.[0]?.transcript || '';
+      if (/はい|うん|オーケー|オッケー|いいよ|送って|ok/i.test(t)) finish('yes');
+      else if (/いいえ|やめ|キャンセル|ちがう|違う|だめ/.test(t)) finish('no');
+      else finish('unclear');
+    };
+    rec.onerror = () => finish('timeout');
+    rec.onend = () => { if (!settled) finish('timeout'); };
+    try { rec.start(); } catch(e) { finish('timeout'); }
+    // 5秒で自動タイムアウト
+    setTimeout(() => finish('timeout'), 5000);
+  });
+}
+
 // 意図に基づく自動アクション
 async function handleIntent(cleanedText, rawText) {
   const intent = detectIntent(rawText);
 
-  if (intent.type === 'line') {
+  if (intent.type === 'line' || intent.type === 'mail') {
     const who = intent.name ? intent.name + 'さん' : '相手';
-    await speak(who + 'にLINEで送ります。');
-    setTimeout(() => sendToLine(), 500);
-  } else if (intent.type === 'mail') {
-    const who = intent.name ? intent.name + 'さん' : '相手';
-    await speak(who + 'にメールで送ります。');
-    setTimeout(() => sendToMail(), 500);
+    const channel = intent.type === 'line' ? 'LINE' : 'メール';
+    // 確認の読み上げ
+    await speak(who + 'に' + channel + 'で送ります。よろしいですか？');
+    // 「はい」を待つ
+    const answer = await listenForConfirmation();
+    if (answer === 'yes') {
+      await speak('送ります。');
+      if (intent.type === 'line') sendToLine();
+      else sendToMail();
+    } else if (answer === 'no') {
+      await speak('キャンセルしました。');
+    } else {
+      // タイムアウト or 不明: 画面を開くだけ（ユーザー判断）
+      await speak('画面を開きます。');
+      if (intent.type === 'line') sendToLine();
+      else sendToMail();
+    }
   } else if (intent.type === 'memo') {
     saveMemo();
     await speak('メモに保存しました。');
@@ -822,6 +939,8 @@ async function handleIntent(cleanedText, rawText) {
     // 通常モード：整形結果を読み上げ
     await speak(cleanedText);
   }
+  // VAD有効なら再び待機モードへ
+  resumeVADIfActive();
 }
 
 // --- Send actions (Phase 1) ---

@@ -1,4 +1,4 @@
-const CACHE = 'speaknote-v8';
+const CACHE = 'speaknote-v9';
 const ASSETS = ['/', '/manifest.json', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
