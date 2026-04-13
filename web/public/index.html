@@ -373,7 +373,16 @@ function updateSyncUI() {
   const loginForm = document.getElementById('syncLoginForm');
   const loggedIn = document.getElementById('syncLoggedIn');
   const btn = document.getElementById('syncBtn');
-  if (syncToken) {
+  if (proKey) {
+    // Pro keyあり: 自動同期中
+    status.textContent = 'Pro自動同期中（メール登録不要）';
+    status.style.color = '#2ed573';
+    loginForm.style.display = 'none';
+    loggedIn.style.display = 'block';
+    btn.style.borderColor = '#2ed573';
+    btn.style.color = '#2ed573';
+    btn.textContent = '同期✓';
+  } else if (syncToken) {
     status.textContent = 'ログイン中: ' + syncEmail;
     status.style.color = '#2ed573';
     loginForm.style.display = 'none';
@@ -382,7 +391,7 @@ function updateSyncUI() {
     btn.style.color = '#2ed573';
     btn.textContent = '同期✓';
   } else {
-    status.textContent = '未ログイン（ログインすると全デバイスで同期されます）';
+    status.textContent = 'Pro購入で自動同期、または下記でログイン';
     status.style.color = '#888';
     loginForm.style.display = 'block';
     loggedIn.style.display = 'none';
@@ -439,20 +448,34 @@ function syncLogout() {
   showToast('ログアウトしました');
 }
 
-async function syncPull() {
-  if (!syncToken) return;
+// 認証ヘッダーを構築（Pro keyが優先）
+function buildSyncHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  if (proKey) headers['x-api-key'] = proKey;
+  else if (syncToken) headers['Authorization'] = 'Bearer ' + syncToken;
+  return headers;
+}
+
+// 同期可能か（Pro key or ログイン中）
+function canSync() {
+  return Boolean(proKey || syncToken);
+}
+
+async function syncPull(silent) {
+  if (!canSync()) return;
   try {
     const res = await fetch('/api/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + syncToken },
+      headers: buildSyncHeaders(),
       body: JSON.stringify({ action: 'get' }),
     });
-    if (res.status === 401) { syncLogout(); return; }
+    if (res.status === 401) { if (syncToken) syncLogout(); return; }
     const data = await res.json();
-    // クラウドデータで上書き
+    // 一時的に自動push抑止
+    _suppressAutoPush = true;
     if (Array.isArray(data.dict)) {
       userDict = data.dict;
-      localStorage.setItem('speaknote_dict', JSON.stringify(userDict)); autoSyncPush();
+      localStorage.setItem('speaknote_dict', JSON.stringify(userDict));
     }
     if (Array.isArray(data.memos)) {
       localStorage.setItem('speaknote_memos', JSON.stringify(data.memos));
@@ -462,12 +485,13 @@ async function syncPull() {
       localStorage.setItem('speaknote_history', JSON.stringify(history));
       renderHistory();
     }
-    showToast('クラウドから取得しました');
-  } catch(e) { showToast('取得エラー'); }
+    _suppressAutoPush = false;
+    if (!silent) showToast('クラウドから取得しました');
+  } catch(e) { _suppressAutoPush = false; if (!silent) showToast('取得エラー'); }
 }
 
 async function syncPush() {
-  if (!syncToken) return;
+  if (!canSync()) return;
   try {
     const payload = {
       dict: userDict,
@@ -477,10 +501,10 @@ async function syncPush() {
     };
     const res = await fetch('/api/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + syncToken },
+      headers: buildSyncHeaders(),
       body: JSON.stringify({ action: 'put', data: payload }),
     });
-    if (res.status === 401) { syncLogout(); return; }
+    if (res.status === 401) { if (syncToken) syncLogout(); return; }
     if (!res.ok) { showToast('保存エラー'); return; }
     showToast('クラウドに保存しました');
   } catch(e) { showToast('保存エラー'); }
@@ -489,8 +513,10 @@ async function syncPush() {
 // データ更新時に自動でクラウドpush（デバウンス）
 let _syncDebounce = null;
 let _syncPending = false; // オフライン中の未同期フラグ
+let _suppressAutoPush = false; // pull中の自動push抑止
 function autoSyncPush() {
-  if (!syncToken) return;
+  if (_suppressAutoPush) return;
+  if (!canSync()) return;
   if (!navigator.onLine) { _syncPending = true; return; } // オフラインなら保留
   if (_syncDebounce) clearTimeout(_syncDebounce);
   _syncDebounce = setTimeout(() => syncPush(), 3000);
@@ -498,7 +524,7 @@ function autoSyncPush() {
 
 // オンライン復帰時に自動同期
 window.addEventListener('online', () => {
-  if (syncToken && _syncPending) {
+  if (canSync() && _syncPending) {
     _syncPending = false;
     showToast('オンラインに復帰しました。同期します...');
     syncPush();
@@ -507,7 +533,7 @@ window.addEventListener('online', () => {
 
 // オフラインになったら通知
 window.addEventListener('offline', () => {
-  if (syncToken) showToast('オフラインです。復帰時に自動同期されます');
+  if (canSync()) showToast('オフラインです。復帰時に自動同期されます');
 });
 
 
@@ -571,8 +597,10 @@ function getDictNames() {
       window.history.replaceState({}, '', url.toString());
       // 設定完了をユーザーに通知
       setTimeout(() => {
-        if (typeof showToast === 'function') showToast('Pro設定完了！');
+        if (typeof showToast === 'function') showToast('Pro設定完了！同期も自動で有効です');
         else alert('Pro設定が完了しました！');
+        // 自動でクラウド同期を取得
+        if (typeof syncPull === 'function') syncPull(true);
       }, 500);
     }
   } catch (e) {}
@@ -586,8 +614,8 @@ let mediaStream = null;
 renderHistory();
 updateProUI();
 updateSyncUI();
-// ログイン済みなら起動時にクラウドから最新データを取得
-if (syncToken) { setTimeout(() => syncPull(), 500); }
+// Pro keyまたはログイン済みなら起動時にクラウドから最新データを取得
+if (proKey || syncToken) { setTimeout(() => syncPull(true), 500); }
 
 // --- VAD (Voice Activity Detection) - 声を検出して自動録音 ---
 let vadStream = null;
@@ -1229,8 +1257,11 @@ function saveProKey() {
   proKey = key;
   localStorage.setItem('speaknote_pro_key', proKey);
   updateProUI();
+  updateSyncUI();
   closeProModal();
-  showToast('Proキーを保存しました');
+  showToast('Proキーを保存しました。同期も自動で有効になります');
+  // Pro keyを保存したら自動で同期開始
+  setTimeout(() => syncPull(true), 500);
 }
 
 function removeProKey() {
