@@ -488,11 +488,27 @@ async function syncPush() {
 
 // データ更新時に自動でクラウドpush（デバウンス）
 let _syncDebounce = null;
+let _syncPending = false; // オフライン中の未同期フラグ
 function autoSyncPush() {
   if (!syncToken) return;
+  if (!navigator.onLine) { _syncPending = true; return; } // オフラインなら保留
   if (_syncDebounce) clearTimeout(_syncDebounce);
   _syncDebounce = setTimeout(() => syncPush(), 3000);
 }
+
+// オンライン復帰時に自動同期
+window.addEventListener('online', () => {
+  if (syncToken && _syncPending) {
+    _syncPending = false;
+    showToast('オンラインに復帰しました。同期します...');
+    syncPush();
+  }
+});
+
+// オフラインになったら通知
+window.addEventListener('offline', () => {
+  if (syncToken) showToast('オフラインです。復帰時に自動同期されます');
+});
 
 
 // --- Dictionary ---
