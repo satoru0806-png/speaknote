@@ -75,7 +75,7 @@ export default async function handler(req, res) {
     formData.append('file', audioBlob, `audio.${ext}`);
     formData.append('model', 'gpt-4o-transcribe');
     formData.append('language', 'ja');
-    formData.append('prompt', '日本語の音声です。');
+    formData.append('prompt', '日本語の自然な会話・メモ・連絡文です。人名や固有名詞、助詞を正確に書き起こしてください。句読点、改行を適切に使用します。');
 
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
@@ -127,7 +127,25 @@ export default async function handler(req, res) {
         .replace(/よろしくおねがいします/g, 'よろしくお願いします')
         .replace(/だいじょうぶ/g, '大丈夫')
         .replace(/ほんとう/g, '本当')
-        .replace(/ほんと/g, '本当');
+        .replace(/ほんと/g, '本当')
+        // 「は」「が」の誤認識修正（文頭・単独音が「は」と誤認識される問題）
+        .replace(/^は$/g, 'あ')
+        .replace(/^はー$/g, 'あー')
+        .replace(/^はっ$/g, 'あっ')
+        // 「はったら」→「あったら」「やったら」等
+        .replace(/やってはったら/g, 'やったら')
+        .replace(/はったらいい/g, 'あったらいい')
+        .replace(/方法はったら/g, '方法があったら')
+        // 「糸で」→「意図で」（同音異義の修正）
+        .replace(/その糸で/g, 'その意図で')
+        .replace(/糸的に/g, '意図的に')
+        // 「見せ回し」→「申し上げ」
+        .replace(/見せ回し/g, '申し上げ')
+        // 「改めて」→「改善して」（文脈で判断）
+        .replace(/方法を改めて/g, '方法を改善して')
+        // 末尾の不自然な助詞補完
+        .replace(/てゆ$/g, 'て。')
+        .replace(/てわ$/g, 'ては');
     }
 
     res.setHeader('X-Plan', 'pro');

@@ -133,6 +133,11 @@ export default async function handler(req, res) {
 
 【整形ルール】
 - 誤字脱字を修正
+- 特に日本語音声認識の以下のパターンを必ず修正:
+  - 「あ」が「は」と誤認識される（例:「はったら」→「あったら」「やったら」）
+  - 同音異義語の誤変換（例:「糸で」→「意図で」、「改めて」→「改善して」）
+  - 文頭の音が欠ける（例:「ったら」→「あったら」）
+  - 余分な文字の挿入（例:「やってはったら」→「やったら」）
 - フィラー（えーと、あのー、まあ、なんか等）を除去
 - 句読点を適切に追加
 - 助詞の間違い・抜けを修正
@@ -177,7 +182,7 @@ export default async function handler(req, res) {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: 'gpt-4.1-mini', max_tokens: 1024, stream: true, messages }),
+        body: JSON.stringify({ model: 'gpt-4.1', max_tokens: 1024, stream: true, messages }),
       });
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -201,7 +206,7 @@ export default async function handler(req, res) {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: 'gpt-4.1-mini', max_tokens: 1024, messages }),
+      body: JSON.stringify({ model: 'gpt-4.1', max_tokens: 1024, messages }),
     });
     const data = await response.json();
     const cleaned = data.choices?.[0]?.message?.content?.trim() || text;
