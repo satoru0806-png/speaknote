@@ -205,7 +205,19 @@ function pasteText(text) {
   lastPastedText = text;
   console.log("[SpeakNote] クリップボード:", text);
 
-  // フォーカス復元してからkeyhelperで貼り付け
+  if (process.platform === "darwin") {
+    // Mac: AppleScript で cmd+v 貼り付け
+    setTimeout(() => {
+      const script = 'tell application "System Events" to keystroke "v" using command down';
+      execFile("osascript", ["-e", script], { timeout: 3000 }, (err) => {
+        if (err) console.log("[SpeakNote] Mac貼り付け失敗:", err.message);
+        else console.log("[SpeakNote] Mac貼り付け完了");
+      });
+    }, 100);
+    return;
+  }
+
+  // Windows: フォーカス復元してからkeyhelperで貼り付け
   if (savedHwnd && SetForegroundWindow) {
     SetForegroundWindow(savedHwnd);
   }
@@ -541,45 +553,72 @@ app.whenReady().then(() => {
     console.log("[SpeakNote] AI整形:", aiEnabled ? "ON" : "OFF");
   });
 
-  // Alt key via koffi
-  try {
-    const koffi = require("koffi");
-    const user32 = koffi.load("user32.dll");
-    const GetAsyncKeyState = user32.func("short GetAsyncKeyState(int vKey)");
-    const GetForegroundWindow = user32.func("uintptr_t GetForegroundWindow()");
-    SetForegroundWindow = user32.func("int SetForegroundWindow(uintptr_t hWnd)");
-    let altWasDown = false;
-    let stopTimer = null;
+  // Alt/Option key detection (cross-platform)
+  if (process.platform === "win32") {
+    // === Windows: koffi (Win32 API) ===
+    try {
+      const koffi = require("koffi");
+      const user32 = koffi.load("user32.dll");
+      const GetAsyncKeyState = user32.func("short GetAsyncKeyState(int vKey)");
+      const GetForegroundWindow = user32.func("uintptr_t GetForegroundWindow()");
+      SetForegroundWindow = user32.func("int SetForegroundWindow(uintptr_t hWnd)");
+      let altWasDown = false;
+      let stopTimer = null;
 
-    setInterval(() => {
-      const isDown = (GetAsyncKeyState(0xA5) & 0x8000) !== 0; // 0xA5 = Right Alt only
-      if (isDown && !altWasDown) {
-        altWasDown = true;
-        if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
-        // Check previous paste for corrections (only when auto-learn is ON)
-        if (autoLearnEnabled) checkPreviousPaste();
-        // Save the currently focused window BEFORE Edge gets focus
-        // processingフラグがONの時（Whisper処理中）はhwndを更新しない
-        if (!isProcessing) {
-          savedHwnd = GetForegroundWindow();
+      setInterval(() => {
+        const isDown = (GetAsyncKeyState(0xA5) & 0x8000) !== 0; // 0xA5 = Right Alt only
+        if (isDown && !altWasDown) {
+          altWasDown = true;
+          if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
+          if (autoLearnEnabled) checkPreviousPaste();
+          if (!isProcessing) savedHwnd = GetForegroundWindow();
+          console.log("[SpeakNote] 保存hwnd:", savedHwnd, isProcessing ? "(処理中:保持)" : "(更新)");
+          playStartBeep();
+          sendCommand("start");
+        } else if (!isDown && altWasDown) {
+          altWasDown = false;
+          playStopBeep();
+          stopTimer = setTimeout(() => { sendCommand("stop"); stopTimer = null; }, 600);
         }
-        console.log("[SpeakNote] 保存hwnd:", savedHwnd, isProcessing ? "(処理中:保持)" : "(更新)");
-        playStartBeep();
-        sendCommand("start");
-      } else if (!isDown && altWasDown) {
-        altWasDown = false;
-        playStopBeep();
-        // Wait 600ms after Alt release for speech recognition to finalize
-        stopTimer = setTimeout(() => {
-          sendCommand("stop");
-          stopTimer = null;
-        }, 600);
-      }
-    }, 80);
+      }, 80);
 
-    console.log("[SpeakNote] 起動完了 - Alt押す=録音 / F9=トグル / ボタン");
-  } catch (err) {
-    console.log("[SpeakNote] 起動完了 - F9=トグル / ボタン (Alt無効:", err.message + ")");
+      console.log("[SpeakNote] 起動完了 - 右Alt押す=録音 / F9=トグル / ボタン");
+    } catch (err) {
+      console.log("[SpeakNote] Alt無効:", err.message);
+    }
+  } else if (process.platform === "darwin") {
+    // === Mac: uiohook-napi で右Option検知 + トグル動作 ===
+    try {
+      const { uIOhook, UiohookKey } = require("uiohook-napi");
+      let isRecording = false;
+
+      // uiohook-napi のキーコード: RightAlt = 3640 (Mac では右Option相当)
+      const RIGHT_OPTION = 3640;
+
+      uIOhook.on('keydown', (e) => {
+        if (e.keycode !== RIGHT_OPTION) return;
+        // トグル動作（1回目=開始、2回目=終了）
+        if (!isRecording) {
+          isRecording = true;
+          if (autoLearnEnabled) checkPreviousPaste();
+          playStartBeep();
+          sendCommand("start");
+          console.log("[SpeakNote] 録音開始（右Option）");
+        } else {
+          isRecording = false;
+          playStopBeep();
+          sendCommand("stop");
+          console.log("[SpeakNote] 録音終了（右Option）");
+        }
+      });
+
+      uIOhook.start();
+      console.log("[SpeakNote] 起動完了 - 右Option押す=録音トグル / F9=トグル / ボタン");
+    } catch (err) {
+      console.log("[SpeakNote] Option無効（Accessibility権限要確認）:", err.message);
+    }
+  } else {
+    console.log("[SpeakNote] 起動完了 - F9=トグル / ボタン (Linux: キー無効)");
   }
 });
 
