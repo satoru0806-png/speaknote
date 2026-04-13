@@ -251,9 +251,13 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
       </div>
     </div>
     <div id="syncLoggedIn" style="display:none;">
-      <button onclick="syncPull()" style="width:100%; padding:10px; border-radius:8px; border:none; background:#667eea; color:#fff; font-size:13px; cursor:pointer; margin-bottom:6px;">クラウドから取得</button>
-      <button onclick="syncPush()" style="width:100%; padding:10px; border-radius:8px; border:none; background:#2ed573; color:#fff; font-size:13px; cursor:pointer; margin-bottom:6px;">クラウドに保存</button>
-      <button onclick="syncLogout()" style="width:100%; padding:10px; border-radius:8px; border:1px solid #444; background:none; color:#e74c3c; font-size:13px; cursor:pointer; margin-bottom:6px;">ログアウト</button>
+      <div style="text-align:center; padding:20px; background:rgba(46,213,115,0.1); border-radius:8px; margin-bottom:10px;">
+        <div style="font-size:32px; margin-bottom:6px;">✓</div>
+        <div style="color:#2ed573; font-size:14px; font-weight:600;">自動同期中</div>
+        <div style="color:#888; font-size:11px; margin-top:6px;">辞書・メモ・履歴は全デバイスで共有されます</div>
+      </div>
+      <button onclick="syncPull()" style="width:100%; padding:8px; border-radius:8px; border:1px solid #444; background:none; color:#888; font-size:12px; cursor:pointer; margin-bottom:6px;">今すぐ最新を取得</button>
+      <button id="syncLogoutBtn" onclick="syncLogout()" style="width:100%; padding:8px; border-radius:8px; border:1px solid #444; background:none; color:#e74c3c; font-size:11px; cursor:pointer; margin-bottom:6px; display:none;">ログアウト</button>
     </div>
     <button onclick="closeSyncModal()" style="width:100%; padding:10px; border-radius:8px; border:1px solid #444; background:none; color:#aaa; font-size:13px; cursor:pointer; margin-top:6px;">閉じる</button>
   </div>
@@ -373,12 +377,14 @@ function updateSyncUI() {
   const loginForm = document.getElementById('syncLoginForm');
   const loggedIn = document.getElementById('syncLoggedIn');
   const btn = document.getElementById('syncBtn');
+  const logoutBtn = document.getElementById('syncLogoutBtn');
   if (proKey) {
-    // Pro keyあり: 自動同期中
-    status.textContent = 'Pro自動同期中（メール登録不要）';
+    // Pro keyあり: 自動同期中（ログアウト不要）
+    status.textContent = 'Proユーザー: 自動同期が有効です';
     status.style.color = '#2ed573';
     loginForm.style.display = 'none';
     loggedIn.style.display = 'block';
+    if (logoutBtn) logoutBtn.style.display = 'none';
     btn.style.borderColor = '#2ed573';
     btn.style.color = '#2ed573';
     btn.textContent = '同期✓';
@@ -387,6 +393,7 @@ function updateSyncUI() {
     status.style.color = '#2ed573';
     loginForm.style.display = 'none';
     loggedIn.style.display = 'block';
+    if (logoutBtn) logoutBtn.style.display = 'block';
     btn.style.borderColor = '#2ed573';
     btn.style.color = '#2ed573';
     btn.textContent = '同期✓';
@@ -395,6 +402,7 @@ function updateSyncUI() {
     status.style.color = '#888';
     loginForm.style.display = 'block';
     loggedIn.style.display = 'none';
+    if (logoutBtn) logoutBtn.style.display = 'none';
     btn.style.borderColor = '#555';
     btn.style.color = '#888';
     btn.textContent = '同期';
