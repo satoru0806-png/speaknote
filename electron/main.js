@@ -8,7 +8,8 @@ const WebSocket = require("ws");
 
 let tray;
 let speechWs = null; // Active WebSocket connection to Edge
-let savedHwnd = null; // Foreground window handle saved when Alt is pressed
+let savedHwnd = null; // Foreground window handle saved when Alt is pressed (Windows)
+let savedMacApp = null; // Frontmost app name saved when Option is pressed (Mac)
 let aiEnabled = true; // AI cleanup toggle
 let autoLearnEnabled = false; // Auto-learn toggle
 let userDict = []; // User dictionary [{from, to}]
@@ -206,14 +207,30 @@ function pasteText(text) {
   console.log("[SpeakNote] クリップボード:", text);
 
   if (process.platform === "darwin") {
-    // Mac: AppleScript で cmd+v 貼り付け
-    setTimeout(() => {
-      const script = 'tell application "System Events" to keystroke "v" using command down';
-      execFile("osascript", ["-e", script], { timeout: 3000 }, (err) => {
-        if (err) console.log("[SpeakNote] Mac貼り付け失敗:", err.message);
-        else console.log("[SpeakNote] Mac貼り付け完了");
-      });
-    }, 100);
+    // Mac: 直前アプリをアクティブ化 → Cmd+V で貼り付け
+    const doMacPaste = () => {
+      const activateScript = savedMacApp
+        ? `tell application "${savedMacApp.replace(/"/g,'\\"')}" to activate`
+        : '';
+      const pasteScript = 'tell application "System Events" to keystroke "v" using command down';
+      // アクティブ化 → 150ms待って貼り付け
+      if (activateScript) {
+        execFile("osascript", ["-e", activateScript], { timeout: 2000 }, () => {
+          setTimeout(() => {
+            execFile("osascript", ["-e", pasteScript], { timeout: 2000 }, (err) => {
+              if (err) console.log("[SpeakNote] Mac貼り付け失敗:", err.message);
+              else console.log("[SpeakNote] Mac貼り付け完了 →", savedMacApp);
+            });
+          }, 150);
+        });
+      } else {
+        execFile("osascript", ["-e", pasteScript], { timeout: 2000 }, (err) => {
+          if (err) console.log("[SpeakNote] Mac貼り付け失敗:", err.message);
+          else console.log("[SpeakNote] Mac貼り付け完了");
+        });
+      }
+    };
+    setTimeout(doMacPaste, 100);
     return;
   }
 
@@ -601,6 +618,13 @@ app.whenReady().then(() => {
         if (!isRecording) {
           isRecording = true;
           if (autoLearnEnabled) checkPreviousPaste();
+          // 直前のフロントアプリ名を保存（osascript）
+          execFile("osascript", ["-e",
+            'tell application "System Events" to return name of first application process whose frontmost is true'
+          ], { timeout: 1500 }, (err, stdout) => {
+            if (!err) savedMacApp = stdout.trim();
+            console.log("[SpeakNote] 保存App:", savedMacApp);
+          });
           playStartBeep();
           sendCommand("start");
           console.log("[SpeakNote] 録音開始（右Option）");
