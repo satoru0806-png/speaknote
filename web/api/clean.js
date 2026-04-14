@@ -186,7 +186,7 @@ export default async function handler(req, res) {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: 'gpt-4.1', max_tokens: 1024, stream: true, messages }),
+        body: JSON.stringify({ model: 'gpt-4.1-mini', max_tokens: 1024, stream: true, messages }),
       });
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -210,7 +210,7 @@ export default async function handler(req, res) {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: 'gpt-4.1', max_tokens: 1024, messages }),
+      body: JSON.stringify({ model: 'gpt-4.1-mini', max_tokens: 1024, messages }),
     });
     const data = await response.json();
     const cleaned = data.choices?.[0]?.message?.content?.trim() || text;
