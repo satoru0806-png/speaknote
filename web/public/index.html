@@ -215,6 +215,11 @@ h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
     AI整形
     <label class="sw"><input type="checkbox" id="chkAI" checked><span class="track"></span></label>
   </div>
+  <div class="toggle-wrap">
+    読み上げ
+    <label class="sw"><input type="checkbox" id="chkTTS"><span class="track"></span></label>
+  </div>
+  <button id="chatBtn" onclick="toggleChatMode()" style="background:none; border:1px solid #555; color:#888; font-size:11px; padding:4px 10px; border-radius:12px; cursor:pointer;">💬会話</button>
   <button id="vadBtn" onclick="toggleVAD()" style="background:none; border:1px solid #555; color:#888; font-size:11px; padding:4px 10px; border-radius:12px; cursor:pointer;">🎧ハンズフリー</button>
   <button id="dictBtn" onclick="openDictModal()" style="background:none; border:1px solid #555; color:#888; font-size:11px; padding:4px 10px; border-radius:12px; cursor:pointer;">辞書</button>
   <button id="syncBtn" onclick="openSyncModal()" style="background:none; border:1px solid #555; color:#888; font-size:11px; padding:4px 10px; border-radius:12px; cursor:pointer;">同期</button>
@@ -353,7 +358,25 @@ const resultArea = document.getElementById('resultArea');
 const resultText = document.getElementById('resultText');
 const btnCopy = document.getElementById('btnCopy');
 const chkAI = document.getElementById('chkAI');
+const chkTTS = document.getElementById('chkTTS');
 const toast = document.getElementById('toast');
+
+// TTS設定の永続化（デフォルトOFF: YouTube継続聴取・会話妨害防止）
+try {
+  const saved = localStorage.getItem('ttsEnabled');
+  chkTTS.checked = saved === 'true';
+} catch {}
+chkTTS.addEventListener('change', () => {
+  try { localStorage.setItem('ttsEnabled', chkTTS.checked ? 'true' : 'false'); } catch {}
+  if (!chkTTS.checked) {
+    // 再生中のTTSをすべて停止
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    if (typeof ttsAudio !== 'undefined' && ttsAudio) {
+      try { ttsAudio.pause(); ttsAudio.currentTime = 0; } catch {}
+      ttsAudio = null;
+    }
+  }
+});
 
 let rec = null;
 let isListening = false;
@@ -634,7 +657,7 @@ let vadActive = false;
 async function startVAD() {
   if (vadActive) return;
   try {
-    vadStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    vadStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
     vadCtx = new (window.AudioContext || window.webkitAudioContext)();
     const source = vadCtx.createMediaStreamSource(vadStream);
     const analyser = vadCtx.createAnalyser();
@@ -791,10 +814,25 @@ function playTone(freq, dur) {
 function playStart() { playTone(880, 0.1); }
 function playStop() { playTone(600, 0.15); }
 
+// --- Vercel Serverlessウォームアップ（タップ直後にコールドスタート回避） ---
+let lastWarmup = 0;
+function warmVercel() {
+  const now = Date.now();
+  if (now - lastWarmup < 15000) return;
+  lastWarmup = now;
+  const headers = { 'Content-Type': 'application/json', 'X-Warmup': '1' };
+  if (proKey) headers['X-Api-Key'] = proKey;
+  ['/api/clean', '/api/transcribe'].forEach(p => {
+    try { fetch(p, { method: 'POST', headers, body: '{}', keepalive: true }).catch(()=>{}); } catch {}
+  });
+}
+// ページ読み込み直後に事前ウォームアップ（タップ前に既に暖機済みに）
+setTimeout(() => warmVercel(), 500);
+
 // --- Toggle ---
 function toggleRecord() {
   if (isListening) stopAndSend();
-  else startListening();
+  else { warmVercel(); startListening(); }
 }
 
 // --- Speech Recognition ---
@@ -859,94 +897,293 @@ function startListening() {
 }
 
 // --- Whisper録音（Pro専用） ---
+// チャンク並列処理用の状態
+let chunkIndexW = 0;
+let pendingChunksW = new Map(); // Map<index, {text, error}>
+let audioBlobsMapW = new Map(); // 全失敗時の救出用
+let totalSentW = 0;
+let totalDoneW = 0;
+let stopRequestedW = false;
+let recordStartTimeW = 0;
+let recordTimerW = null;
+let currentMimeTypeW = 'audio/webm;codecs=opus';
+const CHUNK_INTERVAL_MS_W = 30000; // 30秒ごと
+
+function formatTimeW(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+async function transcribeChunkWeb(base64, format, index) {
+  const res = await fetch('/api/transcribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': proKey },
+    body: JSON.stringify({ audio: base64, format }),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  return data.text || '';
+}
+
 async function startWhisperRecording() {
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
     audioChunks = [];
 
-    // WebM優先、非対応ならMP4
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus' : 'audio/mp4';
-    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+    // チャンク並列処理用の状態リセット
+    chunkIndexW = 0;
+    pendingChunksW = new Map();
+    audioBlobsMapW = new Map();
+    totalSentW = 0;
+    totalDoneW = 0;
+    stopRequestedW = false;
 
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
+    // WebM優先、非対応ならMP4
+    currentMimeTypeW = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : 'audio/mp4';
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: currentMimeTypeW });
+
+    mediaRecorder.ondataavailable = async (e) => {
+      if (!e.data || e.data.size === 0) return;
+      const index = chunkIndexW++;
+      totalSentW++;
+      audioBlobsMapW.set(index, e.data);
+      const fmt = currentMimeTypeW.includes('mp4') ? 'mp4' : 'webm';
+      try {
+        const base64 = await blobToBase64(e.data);
+        // 並列実行（await しない）
+        transcribeChunkWeb(base64, fmt, index).then(text => {
+          pendingChunksW.set(index, { text, error: null });
+          totalDoneW++;
+          updateWebProgress();
+          tryFinalizeWeb();
+        }).catch(err => {
+          pendingChunksW.set(index, { text: '', error: err.message });
+          totalDoneW++;
+          updateWebProgress();
+          tryFinalizeWeb();
+        });
+      } catch (err) {
+        pendingChunksW.set(index, { text: '', error: 'encode: ' + err.message });
+        totalDoneW++;
+        updateWebProgress();
+        tryFinalizeWeb();
+      }
     };
 
-    mediaRecorder.start(1000); // 1秒ごとにチャンク
+    mediaRecorder.onstop = () => {
+      if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+      tryFinalizeWeb();
+    };
+
+    mediaRecorder.start(CHUNK_INTERVAL_MS_W); // 30秒ごとにチャンク
+    recordStartTimeW = Date.now();
     isListening = true;
     mic.className = 'listening';
-    statusEl.textContent = '録音中(Whisper)... もう一度タップで完了';
     previewEl.textContent = '🎤 高品質録音中...';
+    if (recordTimerW) clearInterval(recordTimerW);
+    recordTimerW = setInterval(() => {
+      if (!isListening) return;
+      const sec = (Date.now() - recordStartTimeW) / 1000;
+      statusEl.textContent = `録音中(Whisper)... ${formatTimeW(sec)} (タップで完了)`;
+    }, 500);
+    statusEl.textContent = '録音中(Whisper)... 0:00 (タップで完了)';
     playStart();
   } catch(e) {
     statusEl.textContent = 'マイクの許可が必要です: ' + e.message;
   }
 }
 
+function updateWebProgress() {
+  if (!stopRequestedW) return;
+  statusEl.textContent = `文字起こし中... ${totalDoneW}/${totalSentW}`;
+}
+
+async function tryFinalizeWeb() {
+  if (!stopRequestedW) return;
+  if (totalDoneW < totalSentW) return;
+
+  // 全チャンク完了 → 順序通り結合
+  const parts = [];
+  let failedCount = 0;
+  for (let i = 0; i < chunkIndexW; i++) {
+    const c = pendingChunksW.get(i);
+    if (c && c.text) parts.push(c.text.trim());
+    else if (c && c.error) {
+      failedCount++;
+      const approxStart = i * (CHUNK_INTERVAL_MS_W / 1000);
+      parts.push(`[認識失敗 ${formatTimeW(approxStart)}]`);
+    }
+  }
+  const combinedText = parts.filter(Boolean).join(' ').trim();
+
+  if (!combinedText) {
+    // 全失敗 → LocalStorage に空でもメタ情報だけ残す
+    saveWebBackup('', '', { chunkCount: chunkIndexW, failCount: failedCount, reason: 'all_failed' });
+    mic.className = 'idle';
+    statusEl.textContent = `⚠️ 文字起こし失敗 (${failedCount}/${totalSentW}件)`;
+    setTimeout(() => { statusEl.textContent = 'マイクをタップして録音開始'; }, 4000);
+    stopRequestedW = false;
+    audioBlobsMapW = new Map();
+    return;
+  }
+
+  // LocalStorage バックアップ（生テキスト）
+  saveWebBackup(combinedText, null, {
+    chunkCount: chunkIndexW,
+    failCount: failedCount,
+    durationSec: (Date.now() - recordStartTimeW) / 1000,
+  });
+
+  stopRequestedW = false;
+  audioBlobsMapW = new Map();
+
+  // 辞書置換 → AI整形 or そのまま表示
+  const dictApplied = applyDict(combinedText);
+  if (chatMode) {
+    await handleChatTurn(dictApplied);
+    return;
+  }
+  if (chkAI.checked) {
+    statusEl.textContent = 'AI整形中...';
+    try {
+      await streamClean(dictApplied, combinedText, proKey);
+      // AI整形結果は streamClean 内で showResult → backup上書き
+      const cleanedText = (typeof resultText !== 'undefined' && resultText.textContent) || dictApplied;
+      saveWebBackup(combinedText, cleanedText, {
+        chunkCount: chunkIndexW,
+        failCount: failedCount,
+        durationSec: (Date.now() - recordStartTimeW) / 1000,
+      });
+    } catch (e) {
+      showResult(dictApplied, combinedText);
+      statusEl.textContent = 'AI整形失敗→生テキスト表示';
+      setTimeout(() => { statusEl.textContent = 'マイクをタップして録音開始'; }, 3000);
+    }
+  } else {
+    showResult(dictApplied, combinedText);
+  }
+
+  if (failedCount > 0) {
+    setTimeout(() => {
+      const cur = statusEl.textContent;
+      statusEl.textContent = `${cur} (一部失敗: ${failedCount}件)`;
+      setTimeout(() => { statusEl.textContent = 'マイクをタップして録音開始'; }, 3000);
+    }, 500);
+  }
+}
+
+// LocalStorage にバックアップ保存（最大10件、古いものから削除）
+function saveWebBackup(rawText, cleanedText, meta) {
+  try {
+    const key = 'speaknote_backups';
+    let list = [];
+    try { list = JSON.parse(localStorage.getItem(key) || '[]'); } catch {}
+    list.push({
+      timestamp: new Date().toISOString(),
+      rawText,
+      cleanedText,
+      meta,
+    });
+    // 最新10件のみ保持
+    if (list.length > 10) list = list.slice(-10);
+    localStorage.setItem(key, JSON.stringify(list));
+  } catch (e) {
+    console.error('[SpeakNote Web] backup save error:', e);
+  }
+}
+
+// === 会話モード（ChatGPT Voice相当） ===
+let chatMode = false;
+let chatHistory = []; // [{role:'user'|'assistant', content}]
+const MAX_CHAT_TURNS = 10;
+
+function toggleChatMode() {
+  chatMode = !chatMode;
+  const btn = document.getElementById('chatBtn');
+  if (chatMode) {
+    // 会話モード開始：読み上げ強制ON、履歴リセット
+    if (chkTTS) { chkTTS.checked = true; try { localStorage.setItem('ttsEnabled', 'true'); } catch {} }
+    chatHistory = [];
+    btn.style.background = '#667eea';
+    btn.style.color = 'white';
+    btn.style.borderColor = '#667eea';
+    btn.textContent = '💬会話中';
+    statusEl.textContent = '💬会話モード — マイクで話しかけてください';
+    showToast('会話モード開始');
+  } else {
+    btn.style.background = 'none';
+    btn.style.color = '#888';
+    btn.style.borderColor = '#555';
+    btn.textContent = '💬会話';
+    statusEl.textContent = 'マイクをタップして録音開始';
+    // TTS再生停止
+    if (ttsAudio) { try { ttsAudio.pause(); } catch {} ttsAudio = null; }
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  }
+}
+
+async function handleChatTurn(userText) {
+  if (!userText || !userText.trim()) {
+    if (chatMode) setTimeout(() => { if (chatMode && !isListening) startListening(); }, 300);
+    return;
+  }
+  mic.className = 'processing';
+  statusEl.textContent = '💭 考え中...';
+  // ユーザー発話を画面表示
+  showResult(userText, userText);
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(proKey ? { 'x-api-key': proKey } : {}) },
+      body: JSON.stringify({ message: userText, history: chatHistory.slice(-MAX_CHAT_TURNS * 2) }),
+    });
+    const data = await res.json();
+    const reply = (data.reply || data.content?.[0]?.text || '').trim();
+    if (!reply) throw new Error('返答なし');
+
+    chatHistory.push({ role: 'user', content: userText });
+    chatHistory.push({ role: 'assistant', content: reply });
+
+    // 画面に返答表示（ユーザー発話の下に追記形式）
+    resultText.innerHTML = `<div style="color:#888;font-size:13px;margin-bottom:8px;">🙂 ${escapeHtml(userText)}</div><div>🤖 ${escapeHtml(reply)}</div>`;
+
+    statusEl.textContent = '🔊 返答中...';
+    await speak(reply);
+
+    if (chatMode) {
+      // 会話継続：自動で次の録音開始
+      statusEl.textContent = '💬 聞いています...';
+      setTimeout(() => { if (chatMode && !isListening) startListening(); }, 300);
+    } else {
+      mic.className = 'idle';
+      statusEl.textContent = 'マイクをタップして録音開始';
+    }
+  } catch (e) {
+    mic.className = 'idle';
+    statusEl.textContent = '会話エラー: ' + e.message;
+    setTimeout(() => { if (chatMode) statusEl.textContent = '💬会話モード — マイクで話しかけてください'; }, 2000);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 async function stopAndSend() {
   isListening = false;
   playStop();
 
-  // Whisper録音中の場合
+  // Whisper録音中の場合（チャンク並列処理モード）
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mic.className = 'processing';
-    statusEl.textContent = 'Whisper文字起こし中...';
+    statusEl.textContent = `文字起こし中... ${totalDoneW}/${totalSentW}`;
     previewEl.textContent = '';
-
-    mediaRecorder.onstop = async () => {
-      // マイクストリーム解放
-      if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
-
-      if (audioChunks.length === 0) {
-        mic.className = 'idle';
-        statusEl.textContent = 'テキストなし。もう一度お試しください。';
-        setTimeout(() => { statusEl.textContent = 'マイクをタップして録音開始'; }, 2000);
-        return;
-      }
-
-      const mimeType = mediaRecorder.mimeType;
-      const blob = new Blob(audioChunks, { type: mimeType });
-      audioChunks = [];
-      mediaRecorder = null;
-
-      try {
-        // Blob → base64
-        const base64 = await blobToBase64(blob);
-        const format = mimeType.includes('mp4') ? 'mp4' : 'webm';
-
-        // Whisper API呼び出し
-        const res = await fetch('/api/transcribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': proKey },
-          body: JSON.stringify({ audio: base64, format }),
-        });
-        const data = await res.json();
-        const text = data.text || '';
-
-        if (!text.trim()) {
-          mic.className = 'idle';
-          statusEl.textContent = 'テキストなし。もう一度お試しください。';
-          setTimeout(() => { statusEl.textContent = 'マイクをタップして録音開始'; }, 2000);
-          return;
-        }
-
-        // 辞書置換（方法B）
-        const dictApplied = applyDict(text);
-        // AI整形（ストリーミング）
-        if (chkAI.checked) {
-          statusEl.textContent = 'AI整形中...';
-          await streamClean(dictApplied, text, proKey);
-        } else {
-          showResult(dictApplied, text);
-        }
-      } catch(e) {
-        mic.className = 'idle';
-        statusEl.textContent = 'Whisperエラー: ' + e.message;
-        setTimeout(() => { statusEl.textContent = 'マイクをタップして録音開始'; }, 3000);
-      }
-    };
-
+    stopRequestedW = true;
+    if (recordTimerW) { clearInterval(recordTimerW); recordTimerW = null; }
+    // 停止 → 最後のチャンクが ondataavailable で発火 → onstop → tryFinalizeWeb
     mediaRecorder.stop();
     return;
   }
@@ -967,6 +1204,11 @@ async function stopAndSend() {
 
   // 辞書置換（方法B）
   const dictApplied = applyDict(text);
+  // 会話モード優先（AI整形をスキップしてチャットAPIへ）
+  if (chatMode) {
+    await handleChatTurn(dictApplied);
+    return;
+  }
   // AI cleanup（ストリーミング）
   if (chkAI.checked) {
     mic.className = 'processing';
@@ -1065,10 +1307,40 @@ function clearResult() {
 }
 
 // --- Voice (TTS) ---
+let ttsAudio = null; // OpenAI TTS再生用Audio要素（バックグラウンド再生対応）
+
 function speak(text) {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
+    // TTS OFF時はスキップ（YouTube/会話を妨害しない）
+    if (!chkTTS || !chkTTS.checked) { resolve(); return; }
+    if (!text || !text.trim()) { resolve(); return; }
+
+    // 前回の再生を停止
+    if (ttsAudio) { try { ttsAudio.pause(); } catch {} ttsAudio = null; }
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+
+    // Proユーザー: OpenAI TTS（高品質 + バックグラウンド再生対応）
+    if (proKey) {
+      try {
+        const res = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': proKey },
+          body: JSON.stringify({ text, voice: 'nova', speed: 1.1 }),
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          ttsAudio = new Audio(url);
+          ttsAudio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+          ttsAudio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+          await ttsAudio.play();
+          return;
+        }
+      } catch (e) { console.warn('OpenAI TTS失敗、ブラウザTTSにフォールバック:', e); }
+    }
+
+    // 無料ユーザー or OpenAI TTS失敗時: ブラウザ標準TTS（裏画面で停止する制限あり）
     if (!('speechSynthesis' in window)) { resolve(); return; }
-    window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'ja-JP';
     u.rate = 1.1;

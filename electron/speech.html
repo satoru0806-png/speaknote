@@ -449,16 +449,22 @@ function connectWS() {
         else if (cmd === 'chat_mode_on') { chatMode = true; updateChatModeUI(); }
         else if (cmd === 'chat_mode_off') { chatMode = false; stopTTS(); updateChatModeUI(); }
       } else if (msg.type === 'whisper_result') {
-        // main.jsからWhisper結果を受信
+        // レガシー: main.jsからWhisper結果を受信（単発モード、後方互換）
         stoppingLock = false;
         if (msg.text) {
           accumulated = msg.text;
           sendAccumulated();
         } else {
           btn.className = chatMode ? 'idle chat-mode' : 'idle';
-          statusEl.textContent = msg.error || '文字起こし失敗';
-          setTimeout(() => { statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル'; }, 2000);
+          statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル';
         }
+      } else if (msg.type === 'whisper_chunk_result') {
+        // 新方式: チャンクごとのWhisper結果
+        if (typeof msg.index !== 'number') return;
+        pendingChunks.set(msg.index, { text: msg.text || '', error: msg.error || null });
+        totalChunksDone++;
+        updateProgressUI();
+        tryFinalize();
       } else if (msg.type === 'chat_reply') {
         appendChatLog('assistant', msg.text);
         previewEl.textContent = msg.text;
@@ -491,8 +497,26 @@ function connectWS() {
             setTimeout(() => { statusEl.textContent = 'Alt=録音 / F9=トグル'; }, 3000);
           }
         }
+      } else if (msg.type === 'unprocessed_saved') {
+        statusEl.textContent = '⚠️ 音声を保存しました (次回再試行可)';
+        setTimeout(() => {
+          statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル';
+        }, 5000);
       } else if (msg.type === 'pasted') {
         lastResult = msg.text || '';
+        // 長時間録音の完了ステータスを表示
+        if (chunkIndex > 1) {
+          let failCount = 0;
+          pendingChunks.forEach((v) => { if (v.error) failCount++; });
+          let statusMsg = `✅ 完了 (${chunkIndex}チャンク`;
+          if (failCount > 0) statusMsg += `, ${failCount}件失敗`;
+          if (msg.aiCleanFailed) statusMsg += ', AI整形失敗→生テキスト';
+          statusMsg += ')';
+          statusEl.textContent = statusMsg;
+          setTimeout(() => {
+            statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル';
+          }, 4000);
+        }
       }
     } catch {}
   };
@@ -514,17 +538,36 @@ function toggleRecord() {
   else startListening();
 }
 
-// --- Whisper録音 (MediaRecorder) + リアルタイムプレビュー (SpeechRecognition) ---
+// --- Whisper録音 (MediaRecorder チャンク分割版) ---
+// 30秒ごとにチャンクを切り出し、並列でWhisper APIへ送信する
+// 長時間録音（5分以上）でもVercelのタイムアウトに引っかからず、かつ録音データが消えない
 let mediaRecorder = null;
-let audioChunks = [];
 let mediaStream = null;
 let liveRecognition = null;
 let liveText = '';
 let liveInterim = '';
 const WHISPER_API = 'https://web-five-alpha-24.vercel.app/api/transcribe';
 const WHISPER_KEY = 'speaknote-owner-pro-2026';
+const CHUNK_INTERVAL_MS = 30000; // 30秒ごとにチャンク切り出し
+
+// チャンク管理
+let chunkIndex = 0;            // 次に割り当てるチャンクインデックス
+let pendingChunks = new Map(); // Map<index, {text, error}> 完了チャンク
+let audioBlobsMap = new Map(); // Map<index, Blob> 一時保持（全失敗時の救出用）
+let totalChunksSent = 0;       // 送信総数
+let totalChunksDone = 0;       // 完了総数（成功+失敗）
+let stopRequested = false;     // 停止要求フラグ
+let recordStartTime = 0;       // 録音開始時刻（タイマー表示用）
+let recordTimer = null;        // タイマー interval ID
+let currentMimeType = 'audio/webm;codecs=opus';
 
 let startingLock = false;
+
+function formatTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
 
 // リアルタイム音声認識（プレビュー用）
 // --- Whisper録音 (MediaRecorder) ---
@@ -537,26 +580,144 @@ async function startListening() {
   playTone(880, 0.08);
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioChunks = [];
     accumulated = '';
 
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    // チャンク管理状態をリセット
+    chunkIndex = 0;
+    pendingChunks = new Map();
+    audioBlobsMap = new Map();
+    totalChunksSent = 0;
+    totalChunksDone = 0;
+    stopRequested = false;
+
+    currentMimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus' : 'audio/mp4';
-    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: currentMimeType });
+
+    // 30秒ごとに発火 + 停止時に最後のチャンクも発火
+    mediaRecorder.ondataavailable = async (e) => {
+      if (!e.data || e.data.size === 0) return;
+      const index = chunkIndex++;
+      totalChunksSent++;
+      audioBlobsMap.set(index, e.data); // 全失敗時の救出用に保持
+      const fmt = currentMimeType.includes('mp4') ? 'mp4' : 'webm';
+      try {
+        const base64 = await blobToBase64(e.data);
+        wsSend({ type: 'debug', msg: `chunk #${index} 送信 ${Math.round(base64.length/1024)}KB` });
+        // 並列送信（完了を待たない）
+        wsSend({ type: 'whisper_chunk_request', index, audio: base64, format: fmt });
+      } catch(err) {
+        // エンコード失敗も完了マークを打つ（finalize詰まり防止）
+        pendingChunks.set(index, { text: '', error: 'encode: ' + err.message });
+        totalChunksDone++;
+        wsSend({ type: 'debug', msg: `chunk #${index} encode error: ${err.message}` });
+        updateProgressUI();
+        tryFinalize();
+      }
     };
 
-    mediaRecorder.start();
+    // 停止時はマイクを解放してfinalize判定
+    mediaRecorder.onstop = () => {
+      if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+      wsSend({ type: 'debug', msg: `onstop fired, sent=${totalChunksSent}, done=${totalChunksDone}` });
+      tryFinalize();
+    };
+
+    mediaRecorder.start(CHUNK_INTERVAL_MS); // 30秒ごとにチャンク生成
+    recordStartTime = Date.now();
     btn.className = 'listening';
-    statusEl.textContent = '録音中...';
     previewEl.textContent = '🎤 録音中...';
-    wsSend({ type: 'debug', msg: 'MediaRecorder start OK' });
+    // 録音時間カウントアップ
+    if (recordTimer) clearInterval(recordTimer);
+    recordTimer = setInterval(() => {
+      if (!isListening) return;
+      const sec = (Date.now() - recordStartTime) / 1000;
+      statusEl.textContent = `録音中... ${formatTime(sec)}`;
+    }, 500);
+    statusEl.textContent = '録音中... 0:00';
+    wsSend({ type: 'debug', msg: 'MediaRecorder start OK (chunked mode)' });
   } catch(e) {
     isListening = false;
     statusEl.textContent = '録音失敗: ' + e.message;
   }
   startingLock = false;
+}
+
+function updateProgressUI() {
+  if (!stopRequested) return; // 停止前は録音時間表示、停止後のみ進捗表示
+  statusEl.textContent = `文字起こし中... ${totalChunksDone}/${totalChunksSent}`;
+}
+
+// 全チャンク失敗時の救出: 音声データをmain.jsに送ってunprocessedフォルダへ保存
+async function rescueAudio() {
+  try {
+    // index順にblobを結合
+    const ordered = [];
+    for (let i = 0; i < chunkIndex; i++) {
+      const b = audioBlobsMap.get(i);
+      if (b) ordered.push(b);
+    }
+    if (ordered.length === 0) return;
+    const combined = new Blob(ordered, { type: currentMimeType });
+    const base64 = await blobToBase64(combined);
+    const fmt = currentMimeType.includes('mp4') ? 'mp4' : 'webm';
+    wsSend({ type: 'save_unprocessed_audio', audio: base64, format: fmt });
+    wsSend({ type: 'debug', msg: `rescueAudio: ${Math.round(base64.length/1024)}KB 送信` });
+  } catch (e) {
+    wsSend({ type: 'debug', msg: 'rescueAudio error: ' + e.message });
+  }
+}
+
+// 停止要求かつ全チャンク完了時に結合→送信
+function tryFinalize() {
+  if (!stopRequested) return;
+  if (totalChunksDone < totalChunksSent) return;
+
+  // すべて完了 → 順序通り結合
+  const parts = [];
+  let failedCount = 0;
+  for (let i = 0; i < chunkIndex; i++) {
+    const c = pendingChunks.get(i);
+    if (c && c.text) {
+      parts.push(c.text.trim());
+    } else if (c && c.error) {
+      failedCount++;
+      const approxStart = i * (CHUNK_INTERVAL_MS / 1000);
+      parts.push(`[認識失敗 ${formatTime(approxStart)}]`);
+    }
+    // 空テキスト(無音)は無視
+  }
+  const combinedText = parts.filter(Boolean).join(' ').trim();
+
+  wsSend({ type: 'debug', msg: `finalize: chunks=${chunkIndex}, failed=${failedCount}, len=${combinedText.length}` });
+
+  if (!combinedText) {
+    // すべて失敗or空
+    // 1件以上の失敗があれば音声を救出してローカル保存する
+    if (failedCount > 0 && audioBlobsMap.size > 0) {
+      rescueAudio();
+      statusEl.textContent = `⚠️ 文字起こし失敗 - 音声を救出中 (${failedCount}件)`;
+    } else {
+      statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル';
+    }
+    stoppingLock = false;
+    stopRequested = false;
+    btn.className = chatMode ? 'idle chat-mode' : 'idle';
+    if (failedCount > 0) {
+      setTimeout(() => {
+        statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル';
+      }, 5000);
+    }
+    audioBlobsMap = new Map();
+    return;
+  }
+
+  // 成功したらblobマップをクリア（メモリ解放）
+  audioBlobsMap = new Map();
+
+  accumulated = combinedText;
+  stopRequested = false;
+  sendAccumulated();  // 既存フロー: AI整形 + 貼り付け
 }
 
 let sendGuard = false; // 二重送信防止
@@ -566,51 +727,21 @@ async function stopAndSend() {
   if (!isListening || stoppingLock) return;
   stoppingLock = true;
   isListening = false;
+  stopRequested = true;
   playTone(660, 0.08);
   btn.className = 'processing';
-  btn.className = 'processing';
-  statusEl.textContent = 'Whisper文字起こし中...';
+  statusEl.textContent = `文字起こし中... ${totalChunksDone}/${totalChunksSent}`;
   previewEl.textContent = '';
+  if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
 
-  const rec = mediaRecorder; // ローカル参照を保持
+  const rec = mediaRecorder;
   if (rec && rec.state !== 'inactive') {
-    // MediaRecorder停止 → ondataavailable完了を待ってからWhisper送信
-    rec.onstop = async () => {
-      // マイク解放
-      if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
-      wsSend({ type: 'debug', msg: 'onstop fired, chunks=' + audioChunks.length });
-
-      if (audioChunks.length === 0) {
-        stoppingLock = false;
-        btn.className = chatMode ? 'idle chat-mode' : 'idle';
-        statusEl.textContent = 'テキストなし';
-        return;
-      }
-
-      try {
-        const blob = new Blob(audioChunks, { type: rec.mimeType });
-        audioChunks = [];
-        const base64 = await blobToBase64(blob);
-        const fmt = rec.mimeType.includes('mp4') ? 'mp4' : 'webm';
-
-        wsSend({ type: 'debug', msg: 'Whisper送信: ' + Math.round(base64.length/1024) + 'KB' });
-        // main.js経由でWhisper API呼び出し（CORS回避）
-        wsSend({ type: 'whisper_request', audio: base64, format: fmt });
-      } catch(e) {
-        wsSend({ type: 'debug', msg: 'Whisper encode error: ' + e.message });
-        stoppingLock = false;
-        btn.className = chatMode ? 'idle chat-mode' : 'idle';
-        statusEl.textContent = '文字起こし失敗: ' + e.message;
-        setTimeout(() => { statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル'; }, 2000);
-      }
-    };
+    // 停止 → 最後のチャンクがondataavailableで発火 → onstop → tryFinalize
     rec.stop();
   } else {
-    // MediaRecorderがない場合（フォールバック）
+    // MediaRecorderがない場合のフォールバック
     if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
-    stoppingLock = false;
-    btn.className = chatMode ? 'idle chat-mode' : 'idle';
-    statusEl.textContent = 'テキストなし';
+    tryFinalize();
   }
 }
 
@@ -631,6 +762,22 @@ function sendAccumulated() {
 
   wsSend({ type: 'debug', msg: 'stop text="' + (text || '').substring(0, 50) + '"' });
 
+  // バックアップ用メタ情報（長時間録音の場合のみ）
+  let meta = null;
+  if (chunkIndex > 0 && recordStartTime > 0) {
+    let successCount = 0, failCount = 0;
+    pendingChunks.forEach((v) => {
+      if (v.error) failCount++;
+      else if (v.text) successCount++;
+    });
+    meta = {
+      durationSec: (Date.now() - recordStartTime) / 1000,
+      chunkCount: chunkIndex,
+      successCount,
+      failCount,
+    };
+  }
+
   if (text && text.trim()) {
     lastResult = text;
     btn.className = 'processing';
@@ -640,13 +787,12 @@ function sendAccumulated() {
       wsSend({ type: 'chat_input', text: text });
     } else {
       statusEl.textContent = aiEnabled ? 'AI整形中...' : '出力中...';
-      wsSend({ type: 'result', text: text });
+      wsSend({ type: 'result', text: text, meta });
     }
   } else {
     btn.className = chatMode ? 'idle chat-mode' : 'idle';
-    statusEl.textContent = 'テキストなし';
+    statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル';
     previewEl.textContent = '';
-    setTimeout(() => { statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル'; }, 1500);
   }
 }
 

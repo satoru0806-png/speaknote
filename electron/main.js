@@ -5,6 +5,7 @@ const https = require("https");
 const { exec, execFile } = require("child_process");
 const fs = require("fs");
 const WebSocket = require("ws");
+const backup = require("./backup");
 
 let tray;
 let speechWs = null; // Active WebSocket connection to Edge
@@ -21,6 +22,64 @@ const MAX_CHAT_TURNS = 20;
 
 // --- Vercel API base URL ---
 const VERCEL_API = "https://web-five-alpha-24.vercel.app";
+const OWNER_PRO_KEY = "speaknote-owner-pro-2026";
+
+// --- HTTPS keep-alive agent (TLS再利用でリクエスト遅延削減) ---
+const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 4, keepAliveMsecs: 60000 });
+
+// --- Vercel Serverlessウォームアップ（録音開始と同時にコールドスタート回避） ---
+let lastWarmup = 0;
+function warmVercel() {
+  const now = Date.now();
+  if (now - lastWarmup < 15000) return; // 15秒以内は再送しない
+  lastWarmup = now;
+  const hostname = new URL(VERCEL_API).hostname;
+  ["/api/clean", "/api/transcribe"].forEach((p) => {
+    try {
+      const body = "{}";
+      const req = https.request({
+        hostname, path: p, method: "POST",
+        headers: { "Content-Type": "application/json", "X-Api-Key": OWNER_PRO_KEY, "X-Warmup": "1", "Content-Length": Buffer.byteLength(body) },
+        agent: keepAliveAgent, timeout: 3000,
+      }, (res) => { res.on("data", () => {}); res.on("end", () => {}); });
+      req.on("error", () => {});
+      req.on("timeout", () => req.destroy());
+      req.write(body); req.end();
+    } catch {}
+  });
+}
+
+// --- Whisper API 呼び出し（抽出版・単発/チャンク両対応） ---
+function callTranscribeAPI(audioBase64, format) {
+  const body = JSON.stringify({ audio: audioBase64, format: format || 'webm' });
+  return new Promise((resolve, reject) => {
+    const apiReq = https.request({
+      hostname: new URL(VERCEL_API).hostname,
+      path: "/api/transcribe",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Api-Key": OWNER_PRO_KEY,
+        "Content-Length": Buffer.byteLength(body),
+      },
+      agent: keepAliveAgent,
+      timeout: 60000,
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        try {
+          const data = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+          resolve(data);
+        } catch { resolve({}); }
+      });
+    });
+    apiReq.on("error", (e) => reject(e));
+    apiReq.on("timeout", () => { apiReq.destroy(); reject(new Error("timeout")); });
+    apiReq.write(body);
+    apiReq.end();
+  });
+}
 
 // --- Load optional keys ---
 const envPath = path.join(__dirname, "..", ".env.local");
@@ -72,29 +131,58 @@ function elevenLabsTTS(text) {
   });
 }
 
-// --- AI text cleanup (via Vercel API) ---
+// --- AI text cleanup (SSEストリーミング版 - TTFB短縮) ---
 function cleanWithAI(rawText) {
   return new Promise((resolve) => {
     if (!rawText.trim()) { resolve(rawText); return; }
     // 15文字以下は整形スキップ（高速化）
     if (rawText.trim().length <= 15) { resolve(rawText); return; }
-    // Vercel API経由
     const body = JSON.stringify({ text: rawText });
     const req = https.request({
       hostname: new URL(VERCEL_API).hostname,
       path: "/api/clean",
       method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
-      timeout: 10000,
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        "X-Api-Key": OWNER_PRO_KEY,
+        "Content-Length": Buffer.byteLength(body),
+      },
+      agent: keepAliveAgent,
+      timeout: 15000,
     }, (res) => {
-      const chunks = [];
-      res.on("data", (chunk) => { chunks.push(chunk); });
-      res.on("end", () => {
-        try {
-          const data = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
-          resolve(data.cleaned || rawText);
-        } catch { resolve(rawText); }
+      // ストリーミングでない場合はJSONとしてパース（フォールバック）
+      const isSse = (res.headers["content-type"] || "").includes("text/event-stream");
+      if (!isSse) {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+            resolve(data.cleaned || rawText);
+          } catch { resolve(rawText); }
+        });
+        return;
+      }
+      let acc = "";
+      let buf = "";
+      res.setEncoding("utf-8");
+      res.on("data", (chunk) => {
+        buf += chunk;
+        const lines = buf.split("\n");
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === "[DONE]") continue;
+          try {
+            const obj = JSON.parse(payload);
+            const delta = obj.choices?.[0]?.delta?.content || "";
+            if (delta) acc += delta;
+          } catch {}
+        }
       });
+      res.on("end", () => resolve((acc.trim() || rawText)));
     });
     req.on("error", () => resolve(rawText));
     req.on("timeout", () => { req.destroy(); resolve(rawText); });
@@ -309,36 +397,11 @@ wss.on("connection", (ws) => {
     try {
       const msg = JSON.parse(data);
       if (msg.type === "whisper_request" && msg.audio) {
+        // レガシー: 単発 Whisper（後方互換）
         isProcessing = true;
         console.log("[SpeakNote] Whisper API呼び出し:", Math.round(msg.audio.length/1024) + "KB");
         try {
-          const body = JSON.stringify({ audio: msg.audio, format: msg.format || 'webm' });
-          const result = await new Promise((resolve, reject) => {
-            const apiReq = https.request({
-              hostname: new URL(VERCEL_API).hostname,
-              path: "/api/transcribe",
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-Api-Key": "speaknote-owner-pro-2026",
-                "Content-Length": Buffer.byteLength(body),
-              },
-              timeout: 60000,
-            }, (res) => {
-              const chunks = [];
-              res.on("data", (chunk) => chunks.push(chunk));
-              res.on("end", () => {
-                try {
-                  const data = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
-                  resolve(data);
-                } catch { resolve({}); }
-              });
-            });
-            apiReq.on("error", (e) => reject(e));
-            apiReq.on("timeout", () => { apiReq.destroy(); reject(new Error("timeout")); });
-            apiReq.write(body);
-            apiReq.end();
-          });
+          const result = await callTranscribeAPI(msg.audio, msg.format);
           let text = result.text || "";
           console.log("[SpeakNote] Whisper結果:", text.substring(0, 50));
           isProcessing = false;
@@ -348,13 +411,62 @@ wss.on("connection", (ws) => {
           isProcessing = false;
           ws.send(JSON.stringify({ type: "whisper_result", text: "", error: "Whisper失敗: " + e.message }));
         }
+      } else if (msg.type === "save_unprocessed_audio" && msg.audio) {
+        // 全チャンク失敗時の音声救出: unprocessedフォルダへ保存
+        try {
+          const audioBuffer = Buffer.from(msg.audio, "base64");
+          const stamp = backup.nowStamp();
+          const savedPath = backup.saveUnprocessedAudio({
+            stamp,
+            audioBuffer,
+            format: msg.format || "webm",
+          });
+          if (savedPath) {
+            console.log(`[SpeakNote] 音声救出成功: ${savedPath}`);
+            ws.send(JSON.stringify({
+              type: "unprocessed_saved",
+              path: savedPath,
+              message: `音声を保存しました: ${path.basename(savedPath)}`,
+            }));
+          }
+        } catch (e) {
+          console.error("[SpeakNote] 音声救出失敗:", e.message);
+        }
+      } else if (msg.type === "whisper_chunk_request" && msg.audio && typeof msg.index === 'number') {
+        // 新方式: チャンク単位で並列 Whisper 処理（await しない = 並列実行）
+        const index = msg.index;
+        const audio = msg.audio;
+        const format = msg.format;
+        const byteSize = Math.round(audio.length / 1024);
+        console.log(`[SpeakNote] Chunk #${index} 送信 (${byteSize}KB)`);
+        isProcessing = true;
+        // 意図的に await しない → 複数チャンクが並列実行される
+        (async () => {
+          try {
+            const result = await callTranscribeAPI(audio, format);
+            const text = result.text || "";
+            console.log(`[SpeakNote] Chunk #${index} 完了: ${text.substring(0, 40)}`);
+            ws.send(JSON.stringify({ type: "whisper_chunk_result", index, text }));
+          } catch (e) {
+            console.error(`[SpeakNote] Chunk #${index} 失敗:`, e.message);
+            ws.send(JSON.stringify({ type: "whisper_chunk_result", index, text: "", error: e.message }));
+          }
+        })();
       } else if (msg.type === "result" && msg.text) {
         console.log("[SpeakNote] 認識結果(raw):", msg.text);
         const rawText = msg.text;
+        const meta = msg.meta || null;
         let finalText = rawText;
+        let aiCleanFailed = false;
         if (aiEnabled) {
-          finalText = await cleanWithAI(rawText);
-          console.log("[SpeakNote] 整形結果:", finalText);
+          try {
+            finalText = await cleanWithAI(rawText);
+            console.log("[SpeakNote] 整形結果:", finalText);
+          } catch (e) {
+            console.error("[SpeakNote] AI整形失敗:", e.message);
+            finalText = rawText;
+            aiCleanFailed = true;
+          }
         } else {
           console.log("[SpeakNote] そのまま出力:", finalText);
         }
@@ -362,10 +474,27 @@ wss.on("connection", (ws) => {
         for (const entry of userDict) {
           finalText = finalText.split(entry.from).join(entry.to);
         }
+
+        // バックアップ保存（長時間録音または meta 付きの場合）
+        if (meta) {
+          try {
+            const stamp = backup.nowStamp();
+            const recordedAt = new Date().toISOString();
+            backup.saveBackup({
+              stamp,
+              rawText,
+              cleanedText: aiCleanFailed ? null : finalText,
+              meta: { ...meta, recordedAt },
+            });
+          } catch (e) {
+            console.error("[SpeakNote] バックアップ保存失敗:", e.message);
+          }
+        }
+
         isProcessing = false;
         pasteText(finalText);
         // Send both raw and final text back for diff detection
-        ws.send(JSON.stringify({ type: "pasted", raw: rawText, text: finalText }));
+        ws.send(JSON.stringify({ type: "pasted", raw: rawText, text: finalText, aiCleanFailed }));
         ws.send(JSON.stringify({ type: "command", command: "done" }));
       } else if (msg.type === "chat_input" && msg.text) {
         console.log("[SpeakNote] 会話入力:", msg.text);
@@ -500,6 +629,23 @@ app.whenReady().then(() => {
 
   console.log("[SpeakNote] AI整形: Vercel API経由 (" + VERCEL_API + ")");
 
+  // アプリ起動直後にVercelを先行ウォームアップ（初回録音のコールドスタート回避）
+  warmVercel();
+  // 2分ごとに周期ウォームアップ（待機中もサーバを温める）
+  setInterval(() => { try { warmVercel(); } catch {} }, 120000);
+
+  // バックアップディレクトリ確保 + 古いファイルを自動削除（30日超）
+  try {
+    backup.ensureDirs();
+    backup.cleanupOldBackups();
+    const unprocessed = backup.listUnprocessed();
+    if (unprocessed.length > 0) {
+      console.log(`[SpeakNote] 未処理の音声ファイル ${unprocessed.length}件: ${backup.UNPROCESSED_DIR}`);
+    }
+  } catch (e) {
+    console.error("[SpeakNote] バックアップ初期化失敗:", e.message);
+  }
+
   // F9 toggle recording (debounced)
   let lastF9 = 0;
   globalShortcut.register("F9", () => {
@@ -587,13 +733,20 @@ app.whenReady().then(() => {
         if (isDown && !altWasDown) {
           altWasDown = true;
           if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
+          // 処理中（Whisper/AI整形中）はAlt入力をブロック → 前の記録が再書き込みされる問題を防止
+          if (isProcessing) {
+            console.log("[SpeakNote] Alt無視: 処理中");
+            return;
+          }
           if (autoLearnEnabled) checkPreviousPaste();
-          if (!isProcessing) savedHwnd = GetForegroundWindow();
-          console.log("[SpeakNote] 保存hwnd:", savedHwnd, isProcessing ? "(処理中:保持)" : "(更新)");
+          savedHwnd = GetForegroundWindow();
+          console.log("[SpeakNote] 保存hwnd:", savedHwnd);
+          warmVercel();
           playStartBeep();
           sendCommand("start");
         } else if (!isDown && altWasDown) {
           altWasDown = false;
+          if (isProcessing) return; // 処理中はstopも無視
           playStopBeep();
           stopTimer = setTimeout(() => { sendCommand("stop"); stopTimer = null; }, 600);
         }
@@ -625,6 +778,7 @@ app.whenReady().then(() => {
             if (!err) savedMacApp = stdout.trim();
             console.log("[SpeakNote] 保存App:", savedMacApp);
           });
+          warmVercel();
           playStartBeep();
           sendCommand("start");
           console.log("[SpeakNote] 録音開始（右Option）");
