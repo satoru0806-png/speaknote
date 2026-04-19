@@ -177,6 +177,18 @@ export default async function handler(req, res) {
     { role: 'assistant', content: 'あ、そうですね。' },
     { role: 'user', content: '<stt_input>メモるときはすぐいつでもスノートノートを使うようにしたい文字を打つときなどメモも</stt_input>' },
     { role: 'assistant', content: 'メモを取るときは、いつでもSpeakNoteを使うようにしたいです。文字を入力するときやメモにも活用したいと思います。' },
+    { role: 'user', content: '<stt_input>スマホの反応スピードを上っる方法ははるかな</stt_input>' },
+    { role: 'assistant', content: 'スマホの反応スピードを上げる方法はあるかな。' },
+    { role: 'user', content: '<stt_input>5時もすぐ直せますか今の間違った部分を見てもらってもいいですか</stt_input>' },
+    { role: 'assistant', content: '誤字もすぐ直せますか。今の間違った部分を見てもらってもいいですか。' },
+    { role: 'user', content: '<stt_input>ご時を直して上っってください</stt_input>' },
+    { role: 'assistant', content: '誤字を直して、上げてください。' },
+    { role: 'user', content: '<stt_input>はとバックグラウンド再生を改善してほしいですオンオフの切り替えを従けてほしい</stt_input>' },
+    { role: 'assistant', content: 'あと、バックグラウンド再生を改善してほしいです。オンオフの切り替えを付けてほしい。' },
+    { role: 'user', content: '<stt_input>他に最高になるためには何かはりますかはったら提案くださいはとよく間違います</stt_input>' },
+    { role: 'assistant', content: '他に最高になるためには何かありますか。あったら提案ください。あと、よく間違います。' },
+    { role: 'user', content: '<stt_input>あがはになる改善してください</stt_input>' },
+    { role: 'assistant', content: '「あ」が「は」になる。改善してください。' },
     { role: 'user', content: `<stt_input>${text}</stt_input>` },
   ];
 
