@@ -189,6 +189,8 @@ export default async function handler(req, res) {
     { role: 'assistant', content: '他に最高になるためには何かありますか。あったら提案ください。あと、よく間違います。' },
     { role: 'user', content: '<stt_input>あがはになる改善してください</stt_input>' },
     { role: 'assistant', content: '「あ」が「は」になる。改善してください。' },
+    { role: 'user', content: '<stt_input>晴れもこれもと取り入れてしまうとユーザーが迷ってしまう</stt_input>' },
+    { role: 'assistant', content: 'あれもこれもと取り入れてしまうと、ユーザーが迷ってしまう。' },
     { role: 'user', content: `<stt_input>${text}</stt_input>` },
   ];
 
