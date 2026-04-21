@@ -765,7 +765,7 @@ app.whenReady().then(() => {
       }, 80);
 
       console.log("[SpeakNote] 起動完了 - 右Alt押す=録音 / F9=トグル / ボタン");
-      console.log("[SpeakNote] バージョン: 2026-04-21-fix2 (stoppingLock修正済み)");
+      console.log("[SpeakNote] バージョン: 2026-04-21-fix3 (シンプル単発Whisperに復旧)");
     } catch (err) {
       console.log("[SpeakNote] Alt無効:", err.message);
     }
