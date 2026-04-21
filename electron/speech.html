@@ -576,6 +576,7 @@ async function startListening() {
   if (isListening || startingLock) return;
   startingLock = true;
   isListening = true;
+  stoppingLock = false;  // 前回録音の残骸をクリア（重要: これが残ると次のstopが効かない）
   stopTTS();
   playTone(880, 0.08);
   try {
@@ -783,6 +784,8 @@ function sendAccumulated() {
   if (text && text.trim()) {
     lastResult = text;
     btn.className = 'processing';
+    // 結果送信した時点で stopping 完了 → ロック解除（次の録音で確実に停止できるよう）
+    stoppingLock = false;
     if (chatMode) {
       statusEl.textContent = 'AI応答中...';
       appendChatLog('user', text);
