@@ -396,6 +396,10 @@ wss.on("connection", (ws) => {
   ws.on("message", async (data) => {
     try {
       const msg = JSON.parse(data);
+      // 診断ログ（debug以外のメッセージタイプを表示）
+      if (msg.type !== 'debug') {
+        console.log(`[SpeakNote] WSメッセージ受信: ${msg.type}`);
+      }
       if (msg.type === "whisper_request" && msg.audio) {
         // レガシー: 単発 Whisper（後方互換）
         isProcessing = true;
@@ -750,13 +754,18 @@ app.whenReady().then(() => {
           sendCommand("start");
         } else if (!isDown && altWasDown) {
           altWasDown = false;
-          if (isProcessing) return; // 処理中はstopも無視
+          if (isProcessing) {
+            console.log("[SpeakNote] Alt離す無視: 処理中 (isProcessing=true)");
+            return;
+          }
+          console.log("[SpeakNote] Alt離す検知 → 600ms後にstop");
           playStopBeep();
           stopTimer = setTimeout(() => { sendCommand("stop"); stopTimer = null; }, 600);
         }
       }, 80);
 
       console.log("[SpeakNote] 起動完了 - 右Alt押す=録音 / F9=トグル / ボタン");
+      console.log("[SpeakNote] バージョン: 2026-04-21-fix2 (stoppingLock修正済み)");
     } catch (err) {
       console.log("[SpeakNote] Alt無効:", err.message);
     }
