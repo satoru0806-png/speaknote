@@ -434,12 +434,12 @@ wss.on("connection", (ws) => {
         }
       } else if (msg.type === "whisper_chunk_request" && msg.audio && typeof msg.index === 'number') {
         // 新方式: チャンク単位で並列 Whisper 処理（await しない = 並列実行）
+        // isProcessing はチャンク単位では設定しない（AI整形+ペースト中のみ true にする）
         const index = msg.index;
         const audio = msg.audio;
         const format = msg.format;
         const byteSize = Math.round(audio.length / 1024);
         console.log(`[SpeakNote] Chunk #${index} 送信 (${byteSize}KB)`);
-        isProcessing = true;
         // 意図的に await しない → 複数チャンクが並列実行される
         (async () => {
           try {
@@ -452,6 +452,10 @@ wss.on("connection", (ws) => {
             ws.send(JSON.stringify({ type: "whisper_chunk_result", index, text: "", error: e.message }));
           }
         })();
+      } else if (msg.type === "recording_failed") {
+        // speech.html からのリセット通知（全チャンク失敗 or 空録音）
+        isProcessing = false;
+        console.log("[SpeakNote] 録音失敗/空録音でisProcessing=falseにリセット");
       } else if (msg.type === "result" && msg.text) {
         console.log("[SpeakNote] 認識結果(raw):", msg.text);
         const rawText = msg.text;

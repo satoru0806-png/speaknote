@@ -700,6 +700,8 @@ function tryFinalize() {
     } else {
       statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル';
     }
+    // main.js 側の isProcessing を必ずリセット（Alt無効化防止）
+    wsSend({ type: 'recording_failed' });
     stoppingLock = false;
     stopRequested = false;
     btn.className = chatMode ? 'idle chat-mode' : 'idle';
@@ -790,6 +792,8 @@ function sendAccumulated() {
       wsSend({ type: 'result', text: text, meta });
     }
   } else {
+    // 空テキスト時は main.js の isProcessing をリセット
+    wsSend({ type: 'recording_failed' });
     btn.className = chatMode ? 'idle chat-mode' : 'idle';
     statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル';
     previewEl.textContent = '';
