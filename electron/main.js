@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, clipboard, globalShortcut } = require("electron");
+const { app, BrowserWindow, Tray, Menu, clipboard, globalShortcut, screen } = require("electron");
 const path = require("path");
 const http = require("http");
 const https = require("https");
@@ -10,6 +10,7 @@ const backup = require("./backup");
 let tray;
 let speechWs = null; // Active WebSocket connection to Edge
 let savedHwnd = null; // Foreground window handle saved when Alt is pressed (Windows)
+let savedMousePos = null; // Mouse screen position saved when Alt is pressed (Windows, for click-then-paste)
 let savedMacApp = null; // Frontmost app name saved when Option is pressed (Mac)
 let aiEnabled = true; // AI cleanup toggle
 let autoLearnEnabled = false; // Auto-learn toggle
@@ -322,17 +323,26 @@ function pasteText(text) {
     return;
   }
 
-  // Windows: フォーカス復元してからkeyhelperで貼り付け
+  // Windows: フォーカス復元してからkeyhelperで貼り付け(Ctrl+V)
+  // 保存マウス位置があれば focustermpaste（クリック→Ctrl+V）で DOM focus 問題も回避
   if (savedHwnd && SetForegroundWindow) {
     SetForegroundWindow(savedHwnd);
   }
   setTimeout(() => {
     const hwndStr = savedHwnd ? String(savedHwnd) : "0";
-    console.log("[SpeakNote] focuspaste hwnd:", hwndStr);
-    execFile(keyhelper, ["focuspaste", hwndStr], { timeout: 3000 }, (err) => {
+    const useClick = savedMousePos && Number.isInteger(savedMousePos.x) && Number.isInteger(savedMousePos.y);
+    const args = useClick
+      ? ["focustermpaste", hwndStr, String(savedMousePos.x), String(savedMousePos.y)]
+      : ["focuspaste", hwndStr];
+    console.log("[SpeakNote] paste mode:", args[0], "hwnd:", hwndStr, "mouse:", savedMousePos);
+    execFile(keyhelper, args, { timeout: 3000, windowsHide: true }, (err) => {
       if (err) {
-        console.log("[SpeakNote] focuspaste失敗、通常paste:", err.message);
-        execFile(keyhelper, ["paste"], { timeout: 3000 }, () => {});
+        console.log("[SpeakNote] " + args[0] + " 失敗、focuspaste フォールバック:", err.message);
+        execFile(keyhelper, ["focuspaste", hwndStr], { timeout: 3000, windowsHide: true }, (err2) => {
+          if (err2) {
+            execFile(keyhelper, ["paste"], { timeout: 3000, windowsHide: true }, () => {});
+          }
+        });
       } else {
         console.log("[SpeakNote] 貼り付け完了");
       }
@@ -404,16 +414,38 @@ wss.on("connection", (ws) => {
         // レガシー: 単発 Whisper（後方互換）
         isProcessing = true;
         console.log("[SpeakNote] Whisper API呼び出し:", Math.round(msg.audio.length/1024) + "KB");
+
+        // 🛡️ Whisper 送信前に音声をローカル保存（失敗時のリカバリ用）
+        let audioStamp = null;
+        try {
+          const audioBuffer = Buffer.from(msg.audio, "base64");
+          audioStamp = backup.nowStamp();
+          backup.saveUnprocessedAudio({
+            stamp: audioStamp,
+            audioBuffer,
+            format: msg.format || "webm",
+          });
+          console.log(`[SpeakNote] 音声を事前保存: ${audioStamp}.${msg.format || "webm"}`);
+        } catch (e) {
+          console.error("[SpeakNote] 音声事前保存失敗:", e.message);
+        }
+
         try {
           const result = await callTranscribeAPI(msg.audio, msg.format);
           let text = result.text || "";
           console.log("[SpeakNote] Whisper結果:", text.substring(0, 50));
           isProcessing = false;
-          ws.send(JSON.stringify({ type: "whisper_result", text }));
+          // Whisper 成功 → 事前保存した音声は処理済み扱い（unprocessed のまま残しておく方がデバッグに便利）
+          ws.send(JSON.stringify({ type: "whisper_result", text, audioStamp }));
         } catch (e) {
           console.error("[SpeakNote] Whisper APIエラー:", e.message);
           isProcessing = false;
-          ws.send(JSON.stringify({ type: "whisper_result", text: "", error: "Whisper失敗: " + e.message }));
+          ws.send(JSON.stringify({
+            type: "whisper_result",
+            text: "",
+            error: "Whisper失敗: " + e.message,
+            audioStamp,
+          }));
         }
       } else if (msg.type === "save_unprocessed_audio" && msg.audio) {
         // 全チャンク失敗時の音声救出: unprocessedフォルダへ保存
@@ -460,6 +492,11 @@ wss.on("connection", (ws) => {
         // speech.html からのリセット通知（全チャンク失敗 or 空録音）
         isProcessing = false;
         console.log("[SpeakNote] 録音失敗/空録音でisProcessing=falseにリセット");
+      } else if (msg.type === "repaste" && typeof msg.text === "string") {
+        // 🛡️ 最後の出力を再貼り付け（データ消失防止UIから）
+        const text = msg.text;
+        console.log("[SpeakNote] 再貼り付け要求:", text.substring(0, 30));
+        pasteText(text);
       } else if (msg.type === "result" && msg.text) {
         console.log("[SpeakNote] 認識結果(raw):", msg.text);
         const rawText = msg.text;
@@ -483,20 +520,20 @@ wss.on("connection", (ws) => {
           finalText = finalText.split(entry.from).join(entry.to);
         }
 
-        // バックアップ保存（長時間録音または meta 付きの場合）
-        if (meta) {
-          try {
-            const stamp = backup.nowStamp();
-            const recordedAt = new Date().toISOString();
-            backup.saveBackup({
-              stamp,
-              rawText,
-              cleanedText: aiCleanFailed ? null : finalText,
-              meta: { ...meta, recordedAt },
-            });
-          } catch (e) {
-            console.error("[SpeakNote] バックアップ保存失敗:", e.message);
-          }
+        // 🛡️ バックアップ保存（常時実行、データ消失防止）
+        // meta 有無に関わらず、すべての文字起こしをディスクに保存
+        try {
+          const stamp = backup.nowStamp();
+          const recordedAt = new Date().toISOString();
+          backup.saveBackup({
+            stamp,
+            rawText,
+            cleanedText: aiCleanFailed ? null : finalText,
+            meta: { ...(meta || {}), recordedAt },
+          });
+          console.log(`[SpeakNote] バックアップ保存: ${stamp}.txt`);
+        } catch (e) {
+          console.error("[SpeakNote] バックアップ保存失敗:", e.message);
         }
 
         isProcessing = false;
@@ -617,11 +654,41 @@ function launchEdge() {
 function createTray() {
   tray = new Tray(path.join(__dirname, "icon.ico"));
   tray.setToolTip("SpeakNote - 右Alt=録音 / F8=会話 / F9=トグル / F10=Keep / F11=AI切替");
-  tray.setContextMenu(Menu.buildFromTemplate([
+  const buildMenu = () => Menu.buildFromTemplate([
+    {
+      label: "📋 最後の文字起こしをコピー",
+      enabled: !!lastPastedText,
+      click: () => {
+        if (lastPastedText) {
+          clipboard.writeText(lastPastedText);
+          console.log("[SpeakNote] 最終出力をクリップボードにコピー:", lastPastedText.substring(0, 30));
+        }
+      },
+    },
+    {
+      label: "📂 バックアップフォルダを開く",
+      click: () => {
+        const dir = path.join(require("os").homedir(), "Documents", "SpeakNote", "backup");
+        try { backup.ensureDirs(); } catch {}
+        exec(`start "" "${dir}"`);
+      },
+    },
+    {
+      label: "🎤 音声救出フォルダを開く",
+      click: () => {
+        const dir = path.join(require("os").homedir(), "Documents", "SpeakNote", "unprocessed");
+        try { backup.ensureDirs(); } catch {}
+        exec(`start "" "${dir}"`);
+      },
+    },
+    { type: "separator" },
     { label: "Edge表示", click: launchEdge },
     { type: "separator" },
     { label: "終了", click: () => app.quit() },
-  ]));
+  ]);
+  tray.setContextMenu(buildMenu());
+  // 状態変化を反映するため定期的にメニューを再構築
+  setInterval(() => { try { tray.setContextMenu(buildMenu()); } catch {} }, 5000);
 }
 
 // --- App startup ---
@@ -748,7 +815,11 @@ app.whenReady().then(() => {
           }
           if (autoLearnEnabled) checkPreviousPaste();
           savedHwnd = GetForegroundWindow();
-          console.log("[SpeakNote] 保存hwnd:", savedHwnd);
+          try {
+            const cursor = screen.getCursorScreenPoint();
+            savedMousePos = { x: cursor.x, y: cursor.y };
+          } catch (e) { savedMousePos = null; }
+          console.log("[SpeakNote] 保存hwnd:", savedHwnd, "mouse:", savedMousePos);
           warmVercel();
           playStartBeep();
           sendCommand("start");

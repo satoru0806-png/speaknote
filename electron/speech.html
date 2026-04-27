@@ -14,6 +14,13 @@ body { font-family:'Segoe UI',sans-serif; background:#1a1a2e; color:#fff; height
 #btn.speaking { background:#2ecc71; animation:pulse 1.5s infinite; box-shadow:0 0 30px rgba(46,204,113,0.6); }
 #status { margin-top:12px; font-size:12px; color:#888; }
 #preview { margin-top:8px; font-size:11px; color:#aaa; max-width:280px; text-align:center; word-break:break-all; min-height:16px; }
+#lastOutput { margin-top:8px; max-width:280px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px; display:none; }
+#lastOutput.show { display:block; }
+#lastOutputLabel { font-size:9px; color:#7c8aa8; margin-bottom:4px; letter-spacing:0.5px; }
+#lastOutputText { font-size:11px; color:#cfd8e6; max-height:60px; overflow-y:auto; white-space:pre-wrap; word-break:break-word; line-height:1.4; }
+#lastOutputActions { display:flex; gap:4px; margin-top:6px; }
+#lastOutputActions button { flex:1; background:rgba(102,126,234,0.2); border:1px solid rgba(102,126,234,0.4); color:#b0c4ff; padding:4px 6px; border-radius:6px; cursor:pointer; font-size:10px; }
+#lastOutputActions button:hover { background:rgba(102,126,234,0.35); }
 #conn { position:absolute; top:8px; right:8px; width:8px; height:8px; border-radius:50%; background:#e74c3c; }
 #conn.ok { background:#2ecc71; }
 
@@ -78,6 +85,16 @@ body { font-family:'Segoe UI',sans-serif; background:#1a1a2e; color:#fff; height
 </button>
 <div id="status">接続中...</div>
 <div id="preview"></div>
+
+<!-- 最後の文字起こし結果（消失防止のため常時表示） -->
+<div id="lastOutput">
+  <div id="lastOutputLabel">📝 最後の出力</div>
+  <div id="lastOutputText"></div>
+  <div id="lastOutputActions">
+    <button onclick="copyLastOutput()">📋 コピー</button>
+    <button onclick="rePasteLastOutput()">🔁 再貼り付け</button>
+  </div>
+</div>
 
 <!-- 初回オンボーディング -->
 <div id="chatLog"></div>
@@ -499,6 +516,7 @@ function connectWS() {
         }, 5000);
       } else if (msg.type === 'pasted') {
         lastResult = msg.text || '';
+        updateLastOutputPanel(lastResult);
         if (msg.aiCleanFailed) {
           statusEl.textContent = '⚠️ AI整形失敗→生テキストを貼り付け';
           setTimeout(() => {
@@ -519,6 +537,41 @@ function connectWS() {
 function wsSend(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
 }
+
+// --- 最後の出力パネル（データ消失防止UI） ---
+const lastOutputEl = document.getElementById('lastOutput');
+const lastOutputTextEl = document.getElementById('lastOutputText');
+function updateLastOutputPanel(text) {
+  if (!text || !text.trim()) return;
+  lastOutputTextEl.textContent = text;
+  lastOutputEl.classList.add('show');
+  // localStorage にもバックアップ（次回起動時の復元に使用）
+  try { localStorage.setItem('speaknote_last_output', text); } catch {}
+}
+function copyLastOutput() {
+  if (!lastResult) return;
+  navigator.clipboard.writeText(lastResult).then(() => {
+    statusEl.textContent = '✓ コピーしました';
+    setTimeout(() => { statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル'; }, 2000);
+  }).catch(() => {
+    statusEl.textContent = '⚠️ コピー失敗';
+  });
+}
+function rePasteLastOutput() {
+  if (!lastResult) return;
+  // main.js に再貼り付けを依頼
+  wsSend({ type: 'repaste', text: lastResult });
+  statusEl.textContent = '↻ 再貼り付け中...';
+  setTimeout(() => { statusEl.textContent = chatMode ? '会話モード: Alt=話す' : 'Alt=録音 / F9=トグル'; }, 2000);
+}
+// 起動時に前回の出力を復元
+try {
+  const saved = localStorage.getItem('speaknote_last_output');
+  if (saved) {
+    lastResult = saved;
+    updateLastOutputPanel(saved);
+  }
+} catch {}
 
 // --- Toggle ---
 function toggleRecord() {
